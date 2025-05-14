@@ -12,7 +12,7 @@ services:
     volumes:
       - ./public:/app/public
       - ./vendor:/app/vendor
-      - ./public/logs:/app/public/logs
+      - ./logs:/app/logs
     environment:
       - APP_ENV=production
       - TZ=Europe/Vienna

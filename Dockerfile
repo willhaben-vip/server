@@ -11,7 +11,8 @@ RUN apt-get update && apt-get install -y \
 
 # Install PHP extensions
 RUN docker-php-ext-install \
-    opcache
+    opcache \
+    sockets
 
 # Install Composer
 RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
@@ -30,15 +31,16 @@ WORKDIR /app
 COPY . .
 
 # Install dependencies
+ENV COMPOSER_ALLOW_SUPERUSER=1
 RUN composer install --no-dev --optimize-autoloader
 
 # Create log directory and set permissions
-RUN mkdir -p public/logs \
-    && touch public/logs/redirect.log \
-    && touch public/logs/roadrunner.log \
-    && touch public/logs/roadrunner_error.log \
-    && touch public/logs/php_error.log \
-    && chmod -R 777 public/logs
+RUN mkdir -p logs/application \
+    && touch logs/application/redirect.log \
+    && touch logs/roadrunner.log \
+    && touch logs/roadrunner_error.log \
+    && touch logs/php_error.log \
+    && chmod -R 777 logs
 
 # Configure PHP
 COPY docker/php.ini /usr/local/etc/php/conf.d/custom.ini

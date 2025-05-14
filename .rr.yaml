@@ -16,7 +16,7 @@ http:
       exec_ttl: 60s
       
 server:
-  command: "php public/index.php"
+  command: "php public/member/index.php"
   env_map:
     APP_ENV: "production"
     DISPLAY_ERRORS: "0"
