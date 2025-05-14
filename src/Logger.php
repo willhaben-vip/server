@@ -5,8 +5,8 @@ namespace Willhaben\RedirectService;
  * Shared logging utility for both worker and application
  */
 class Logger {
-    private $logFile;
-    private $context;
+    private string $logFile;
+    private string $context;
 
     public function __construct(string $logFile, string $context = '') {
         $this->logFile = $logFile;
@@ -36,9 +36,9 @@ class Logger {
     /**
      * Log an error message
      */
-    public function error(string $message, \Throwable $e = null): void {
+    public function error(string $message, ?\Throwable $e = null): void {
         $data = [];
-        if ($e) {
+        if ($e !== null) {
             $data['error'] = $e->getMessage();
             $data['trace'] = $e->getTraceAsString();
         }
@@ -56,7 +56,7 @@ class Logger {
     /**
      * Log a redirect
      */
-    public function redirect(string $url, int $status = 302): void {
+    public function redirect(string $url, int $status = 301): void {
         $this->log("Redirecting to: $url", ['status' => $status]);
     }
 }

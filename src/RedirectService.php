@@ -5,7 +5,8 @@ namespace Willhaben\RedirectService;
  * Core service for handling redirects
  */
 class RedirectService {
-    private $logger;
+    private Logger $logger;
+    private const DEFAULT_REDIRECT_STATUS = 301; // Always use permanent redirects
 
     public function __construct(Logger $logger) {
         $this->logger = $logger;
@@ -47,13 +48,13 @@ class RedirectService {
         $sellerSlug = $this->verifySellerAndGetSlug($sellerId);
         if ($sellerSlug) {
             $url = BASE_URL . '/' . $sellerSlug . '/';
-            $this->logger->redirect($url, 301);
-            throw new RedirectException($url, 301);
+            $this->logger->redirect($url, self::DEFAULT_REDIRECT_STATUS);
+            throw new RedirectException($url, self::DEFAULT_REDIRECT_STATUS);
         }
 
-        // If seller not found, redirect to homepage
+        // If seller not found, redirect to homepage with permanent redirect
         $this->logger->debug("Invalid seller ID, redirecting to homepage", ['id' => $sellerId]);
-        throw new RedirectException(BASE_URL, 302);
+        throw new RedirectException(BASE_URL, self::DEFAULT_REDIRECT_STATUS);
     }
 
     /**
@@ -69,8 +70,16 @@ class RedirectService {
         $sellerSlug = 'rene.kapusta';
         $url = BASE_URL . '/' . $sellerSlug . '/' . $productSlug . '-' . $productId;
         
-        $this->logger->redirect($url, 301);
-        throw new RedirectException($url, 301);
+        $this->logger->redirect($url, self::DEFAULT_REDIRECT_STATUS);
+        throw new RedirectException($url, self::DEFAULT_REDIRECT_STATUS);
+    }
+
+    /**
+     * Handle a default redirect to homepage
+     */
+    public function handleDefaultRedirect(): void {
+        $this->logger->debug("Processing default redirect to homepage");
+        throw new RedirectException(BASE_URL, self::DEFAULT_REDIRECT_STATUS);
     }
 }
 
