@@ -1,0 +1,3 @@
+[submodule "public/member"]
+	path = public/member
+	url = git@github.com:willhaben-vip/member.git
