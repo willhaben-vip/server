@@ -1,128 +1,112 @@
 <?php
-require_once __DIR__ . '/vendor/autoload.php';
+/**
+ * RoadRunner Worker Script
+ */
 
+use Willhaben\RedirectService\Logger;
+use Willhaben\RedirectService\RedirectService;
+use Willhaben\RedirectService\RedirectException;
+
+// Setup error handling
 ini_set('display_errors', 'stderr');
+ini_set('log_errors', '1');
+ini_set('error_log', 'stderr');
 error_reporting(E_ALL);
 
-use Spiral\RoadRunner\Worker;
-use Spiral\RoadRunner\Http\PSR7Worker;
-use Nyholm\Psr7;
+// Include configuration and autoloader
+require_once __DIR__ . '/config/config.php';
+require_once __DIR__ . '/vendor/autoload.php';
 
+// Initialize logger
+$logger = new Logger(WORKER_LOG_FILE, 'WORKER');
+$logger->debug("Starting worker");
 
-// Enable debug logging
-error_log("Worker starting up");
+try {
+    // Initialize redirect service
+    $redirectService = new RedirectService(new Logger(REDIRECT_LOG_FILE, 'APP'));
 
-// Create PSR-7 worker
-$worker = Worker::create();
-$psrFactory = new Psr7\Factory\Psr17Factory();
-
-$psr7 = new PSR7Worker($worker, $psrFactory, $psrFactory, $psrFactory);
-
-error_log("Worker initialized");
-
-
-
-while (true) {
-    try {
-        error_log("Waiting for request...");
-        $request = $psr7->waitRequest();
-
-        if ($request === null) {
-            error_log("Null request received, breaking loop");
-            break;
-        }
-
-        error_log("Request received: " . $request->getUri()->getPath());
-
-        // Set up environment
-        $_SERVER = [
-            'REQUEST_URI' => $request->getUri()->getPath(),
-            'REQUEST_METHOD' => $request->getMethod(),
-            'HTTP_HOST' => $request->getUri()->getHost() ?: 'willhaben.vip',
-            'REMOTE_ADDR' => '127.0.0.1',
-            'SERVER_PROTOCOL' => 'HTTP/1.1',
-            'SERVER_NAME' => 'willhaben.vip',
-            'SERVER_PORT' => 8080,
-            'SCRIPT_NAME' => '/index.php',
-            'SCRIPT_FILENAME' => __DIR__ . '/public/index.php',
-            'PHP_SELF' => '/index.php',
-            'DOCUMENT_ROOT' => __DIR__ . '/public',
-            'REQUEST_TIME' => time(),
-            'REQUEST_TIME_FLOAT' => microtime(true),
-            'HTTPS' => 'on'
-        ];
-
-        // Copy all request headers
-        foreach ($request->getHeaders() as $name => $values) {
-            $name = 'HTTP_' . strtoupper(str_replace('-', '_', $name));
-            $_SERVER[$name] = implode(', ', $values);
-        }
-
-        // Initialize other superglobals
-        $_GET = [];
-        parse_str($request->getUri()->getQuery(), $_GET);
-        $_POST = [];
-        $_COOKIE = [];
-        foreach ($request->getHeader('Cookie') as $cookie) {
-            parse_str(strtr($cookie, ['; ' => '&']), $parsed);
-            $_COOKIE = array_merge($_COOKIE, $parsed);
-        }
-        $_FILES = [];
-
-        // Ensure clean output buffer state
-        while (ob_get_level() > 0) {
-            ob_end_clean();
-        }
-
-        // Start fresh output buffer
-        ob_start();
-
+    // Create worker
+    $worker = Spiral\RoadRunner\Worker::create();
+    $psrFactory = new Nyholm\Psr7\Factory\Psr17Factory();
+    $psr7 = new Spiral\RoadRunner\Http\PSR7Worker($worker, $psrFactory, $psrFactory, $psrFactory);
+    
+    $logger->debug("Worker initialized successfully");
+    
+    while (true) {
         try {
-            error_log("Including index.php");
-            require __DIR__ . '/public/index.php';
-            error_log("index.php included successfully");
+            $request = $psr7->waitRequest();
+            
+            if ($request === null) {
+                $logger->debug("Termination request received");
+                break;
+            }
 
-            // If we get here, no redirect was triggered
-            $output = ob_get_clean();
-            error_log("Output captured length: " . strlen($output));
+            $path = $request->getUri()->getPath();
+            $logger->debug("Processing request", ['path' => $path]);
 
-            // Create normal response
-            $response = $psrFactory->createResponse(200)
-                ->withHeader('Content-Type', 'text/html')
-                ->withHeader('Server', 'RoadRunner')
-                ->withBody($psrFactory->createStream($output));
+            // Set up server environment
+            $_SERVER = [
+                'REQUEST_URI' => $path,
+                'REQUEST_METHOD' => $request->getMethod(),
+                'HTTP_HOST' => $request->getHeaderLine('Host') ?: 'localhost',
+                'SCRIPT_NAME' => '/index.php',
+                'DOCUMENT_ROOT' => APP_ROOT . '/public/member',
+                'SCRIPT_FILENAME' => APP_ROOT . '/public/member/index.php',
+                'PHP_SELF' => '/index.php',
+                'REMOTE_ADDR' => '127.0.0.1',
+                'SERVER_PROTOCOL' => 'HTTP/1.1'
+            ];
+            
+            // Parse query parameters
+            $_GET = [];
+            parse_str($request->getUri()->getQuery(), $_GET);
 
-        } catch (RedirectException $e) {
-            ob_end_clean();
-            error_log("Redirect caught: " . $e->getUrl());
+            try {
+                // Process the request based on URL pattern
+                if (preg_match('#^/iad/kaufen-und-verkaufen/verkaeuferprofil/([0-9]+)/?$#i', $path, $matches)) {
+                    $redirectService->handleSellerRedirect($matches[1]);
+                } elseif (preg_match('#^/iad/kaufen-und-verkaufen/d/([\w-]+)-([0-9]+)/?$#i', $path, $matches)) {
+                    $redirectService->handleProductRedirect($matches[1], $matches[2]);
+                } else {
+                    // Default: redirect to homepage
+                    throw new RedirectException(BASE_URL, 302);
+                }
 
-            $response = $psrFactory->createResponse($e->getStatus())
-                ->withHeader('Location', $e->getUrl())
-                ->withHeader('Server', 'RoadRunner');
-        }
-
-        error_log("Sending response");
-        $psr7->respond($response);
-        error_log("Response sent");
-
-    } catch (\Throwable $e) {
-        error_log("Error in worker: " . $e->getMessage() . "\n" . $e->getTraceAsString());
-
-        try {
-            // Ensure clean output buffer state
+            } catch (RedirectException $re) {
+                $logger->debug("Handling redirect", [
+                    'url' => $re->getUrl(),
+                    'status' => $re->getStatus()
+                ]);
+                
+                $response = $psrFactory->createResponse($re->getStatus())
+                    ->withHeader('Location', $re->getUrl())
+                    ->withBody($psrFactory->createStream(''));
+                    
+                $psr7->respond($response);
+                continue;
+            }
+            
+        } catch (\Throwable $e) {
+            $logger->error("Error processing request", $e);
+            
             while (ob_get_level() > 0) {
                 ob_end_clean();
             }
-
-            // Create error response
-            $response = $psrFactory->createResponse(500)
-                ->withHeader('Content-Type', 'text/plain')
-                ->withHeader('Server', 'RoadRunner')
-                ->withBody($psrFactory->createStream('Internal Server Error: ' . $e->getMessage()));
-
-            $psr7->respond($response);
-        } catch (\Throwable $e2) {
-            error_log("Error sending error response: " . $e2->getMessage() . "\n" . $e2->getTraceAsString());
+            
+            try {
+                $psr7->respond(
+                    $psrFactory->createResponse(500)
+                        ->withHeader('Content-Type', 'text/plain')
+                        ->withBody($psrFactory->createStream("Internal Server Error: " . $e->getMessage()))
+                );
+            } catch (\Throwable $innerException) {
+                $logger->error("Failed to send error response", $innerException);
+            }
         }
     }
+} catch (\Throwable $e) {
+    $logger->error("Fatal error", $e);
+    exit(1);
 }
+
+$logger->debug("Worker stopped");

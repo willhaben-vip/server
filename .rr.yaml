@@ -10,25 +10,28 @@ http:
     weak: false
   middleware: ["static", "gzip"]
   pool:
-    num_workers: 4
-    max_jobs: 10
+    num_workers: 1
+    max_jobs: 1    # Process one request per worker
+    allocate_timeout: 60s
+    debug: true
     supervisor:
       exec_ttl: 60s
-      
+    
 server:
-  command: "php public/member/index.php"
+  command: "php .rr-worker.php"
   env_map:
     APP_ENV: "production"
-    DISPLAY_ERRORS: "0"
+    DISPLAY_ERRORS: "1"
     ERROR_REPORTING: "32767"
+    DEBUG: "1"
   relay: "pipes"
   
 logs:
-  mode: production
-  level: info
+  mode: development
+  level: debug
   encoding: json
-  output: "logs/roadrunner/server.log"
-  err_output: "logs/roadrunner/error.log"
+  output: "stderr"
+  err_output: "stderr"
   
 reload:
   enabled: false
@@ -47,3 +50,16 @@ status:
 
 metrics:
   address: "0.0.0.0:2112"
+
+# Debug options for detailed troubleshooting
+debug:
+  log_allocated: true        # Log worker allocation details
+  max_request_size: 64
+  output: "stderr"          # Direct output to stderr
+  log_level: 5              # Maximum verbosity (values 0-5)
+
+# Enable HTTP plugin reload on errors
+limit:
+  http:
+    max_error_attempts: 5    # Maximum number of errors before resetting the worker
+    interval: 1m            # Time period for error counting
