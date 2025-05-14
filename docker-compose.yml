@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  roadrunner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"      # Application
+      - "2114:2114"      # Health/Status
+      - "2112:2112"      # Metrics
+    volumes:
+      - ./public:/app/public
+      - ./vendor:/app/vendor
+      - ./public/logs:/app/public/logs
+    environment:
+      - APP_ENV=production
+      - TZ=Europe/Vienna
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2114"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+

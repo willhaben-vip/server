@@ -1,0 +1,106 @@
+version: '3.8'
+
+services:
+  roadrunner:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8080:8080"      # Application
+      - "2114:2114"      # Health/Status
+      - "2112:2112"      # Metrics
+      - "9003:9003"      # Xdebug
+    volumes:
+      - .:/app           # Mount entire project for development
+      - ./logs:/app/logs # Explicit logs mount
+    environment:
+      - APP_ENV=development
+      - XDEBUG_MODE=develop,debug
+      - XDEBUG_CONFIG=client_host=host.docker.internal
+      - PHP_IDE_CONFIG=serverName=roadrunner
+      - TZ=Europe/Vienna
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2114"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+    restart: unless-stopped
+    networks:
+      - roadrunner-dev
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./docker/prometheus:/etc/prometheus
+      - prometheus_data:/prometheus
+      - ./logs/prometheus:/prometheus/log  # Prometheus logs
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+    networks:
+      - roadrunner-dev
+
+  grafana:
+    image: grafana/grafana:latest
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning
+      - grafana_data:/var/lib/grafana
+      - ./logs/grafana:/var/log/grafana  # Grafana logs
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=secret
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_LOG_MODE=file
+      - GF_LOG_LEVEL=info
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    networks:
+      - roadrunner-dev
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+      - ./logs/node-exporter:/node-exporter/log  # Node Exporter logs
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    ports:
+      - "9100:9100"
+    restart: unless-stopped
+    networks:
+      - roadrunner-dev
+
+volumes:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  roadrunner-dev:
+    driver: bridge

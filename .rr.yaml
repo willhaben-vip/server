@@ -1,0 +1,49 @@
+version: "3.0"
+
+http:
+  address: "0.0.0.0:8080"
+  static:
+    dir: "public"
+    forbid: [".htaccess", "*.json", "*.py"]
+    allow: ["index.php", "*.jpg", "*.jpeg", "*.png", "*.gif", "*.css", "*.js", "*.xml"]
+    calculate_etag: true
+    weak: false
+  middleware: ["static", "gzip"]
+  pool:
+    num_workers: 4
+    max_jobs: 10
+    supervisor:
+      exec_ttl: 60s
+      
+server:
+  command: "php public/index.php"
+  env_map:
+    APP_ENV: "production"
+    DISPLAY_ERRORS: "0"
+    ERROR_REPORTING: "32767"
+  relay: "pipes"
+  
+logs:
+  mode: production
+  level: info
+  encoding: json
+  output: "logs/roadrunner/server.log"
+  err_output: "logs/roadrunner/error.log"
+  
+reload:
+  enabled: false
+  patterns: [".php"]
+  services:
+    http:
+      recursive: true
+      dirs: ["public"]
+      
+health:
+  address: "0.0.0.0:2114"
+  timeout: 5s
+
+status:
+  address: "0.0.0.0:2114"
+
+metrics:
+  address: "0.0.0.0:2112"

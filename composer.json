@@ -1,0 +1,17 @@
+{
+    "name": "willhaben/redirect-service",
+    "description": "Willhaben Redirect Service",
+    "type": "project",
+    "require": {
+        "php": "^8.4",
+        "spiral/roadrunner-worker": "^3.0",
+        "spiral/roadrunner-http": "^3.0",
+        "nyholm/psr7": "^1.8"
+    },
+    "autoload": {
+        "psr-4": {
+            "Willhaben\\RedirectService\\": "src/"
+        }
+    }
+}
+
