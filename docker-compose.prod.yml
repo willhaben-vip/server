@@ -1,0 +1,103 @@
+version: '3.8'
+
+# Production-specific overrides and configurations
+services:
+  roadrunner:
+    container_name: willhaben_app
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - APP_ENV=production
+    restart: unless-stopped
+    ports:
+      - "8080:8080"  # Application
+      - "127.0.0.1:2115:2114"  # Health/Status
+      - "127.0.0.1:2113:2112"  # Metrics
+    volumes:
+      - /opt/willhaben.vip/data/member:/app/public/member
+      - /opt/willhaben.vip/data/logs:/app/logs
+      - /opt/willhaben.vip/data/config:/app/config
+    environment:
+      - APP_ENV=production
+      - TZ=Europe/Vienna
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2114"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+    networks:
+      - app_network
+      - web_network
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    depends_on:
+      - storage
+
+  nginx:
+    container_name: willhaben_nginx
+    image: nginx:stable-alpine
+    restart: unless-stopped
+    ports:
+      - "8090:80"
+      - "8443:443"
+    volumes:
+      - /opt/willhaben.vip/nginx/conf.d:/etc/nginx/conf.d
+      - /opt/willhaben.vip/nginx/ssl:/etc/nginx/ssl
+      - /opt/willhaben.vip/data/logs/nginx:/var/log/nginx
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - web_network
+    depends_on:
+      - roadrunner
+
+  storage:
+    container_name: willhaben_storage
+    image: redis:alpine
+    restart: unless-stopped
+    volumes:
+      - /opt/willhaben.vip/data/redis:/data
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  app_network:
+    driver: bridge
+    internal: true
+  web_network:
+    driver: bridge
