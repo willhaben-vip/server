@@ -17,6 +17,11 @@
 #
 # If no parameter is provided, a patch version bump is assumed.
 #
+# Features:
+# - Automatically excludes files and directories listed in .gitignore and .dockerignore
+# - Always preserves the public/member directory
+# - Handles version management and deployment to the production server
+#
 # =========================================================
 
 # Exit on error
@@ -37,6 +42,105 @@ echo "=== Deployment started at $(date) ===" > "$LOG_FILE"
 # =========================================================
 # Helper Functions
 # =========================================================
+
+# Parse ignore files (.gitignore and .dockerignore) and convert patterns to rsync-compatible exclude options
+# Returns an array of rsync exclude options
+parse_ignore_files() {
+    local excludes=()
+    local gitignore=".gitignore"
+    local dockerignore=".dockerignore"
+    local files=("$gitignore" "$dockerignore")
+    local file line pattern
+    
+    # Add critical exclusions that should always be present
+    excludes+=("--exclude=deploy.sh")
+    excludes+=("--exclude=$LOG_FILE")
+    
+    # Process each ignore file
+    for file in "${files[@]}"; do
+        if [[ -f "$file" ]]; then
+            log "Processing exclusion patterns from $file"
+            
+            # Read the file line by line
+            while IFS= read -r line || [[ -n "$line" ]]; do
+                # Skip empty lines and comments
+                if [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]]; then
+                    continue
+                fi
+                
+                # Trim whitespace
+                line=$(echo "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+                
+                # Skip if empty after trim
+                if [[ -z "$line" ]]; then
+                    continue
+                fi
+                
+                # Handle negation patterns (patterns starting with !)
+                if [[ "$line" == !* ]]; then
+                    # For rsync, we need to convert negated patterns differently
+                    # We first remove the ! and prepare for using --include instead
+                    pattern="${line#!}"
+                    excludes+=("--include=$pattern")
+                    continue
+                fi
+                
+                # Handle directory-specific patterns
+                if [[ "$line" == */ ]]; then
+                    # Already ends with /, keep as is
+                    excludes+=("--exclude=$line")
+                elif [[ "$line" == /* ]]; then
+                    # Remove leading / as rsync treats patterns as relative to the source dir
+                    pattern="${line#/}"
+                    excludes+=("--exclude=$pattern")
+                else
+                    # Regular pattern
+                    excludes+=("--exclude=$line")
+                fi
+            done < "$file"
+        else
+            log "Warning: $file not found, skipping its patterns"
+        fi
+    done
+    
+    # Return the excludes array
+    echo "${excludes[@]}"
+}
+
+# Create a temporary file with merged exclusion rules
+# Returns the path to the created temporary file
+create_exclude_file() {
+    local temp_file
+    local excludes
+    
+    # Create temporary file
+    temp_file=$(mktemp /tmp/rsync-excludes.XXXXXX)
+    
+    # Get exclusion patterns from ignore files
+    readarray -t excludes < <(parse_ignore_files | tr ' ' '\n' | grep -v '^--exclude=' | grep -v '^--include=')
+    
+    # Add critical exclusions
+    echo "- deploy.sh" >> "$temp_file"
+    echo "- $LOG_FILE" >> "$temp_file"
+    
+    # Add patterns from ignore files
+    for pattern in "${excludes[@]}"; do
+        if [[ -n "$pattern" ]]; then
+            # If pattern is an include (negation in gitignore)
+            if [[ "$pattern" == --include=* ]]; then
+                echo "+ ${pattern#--include=}" >> "$temp_file"
+            else
+                echo "- ${pattern#--exclude=}" >> "$temp_file"
+            fi
+        fi
+    done
+    
+    # Add special inclusion for public/member directory
+    echo "+ */public/member/**" >> "$temp_file"
+    
+    # Print the temp file path
+    echo "$temp_file"
+}
 
 # Log message to both console and log file
 log() {
@@ -243,28 +347,28 @@ create_temp_directory() {
 # Deploy files to server using rsync
 deploy_files() {
     local version=$(get_current_version)
+    local exclude_file
     
     log "Deploying version $version to $SERVER:$REMOTE_DIR"
     
     # Create temporary directory on remote server
     create_temp_directory
     
+    # Create a temporary file with exclusion patterns from .gitignore and .dockerignore
+    exclude_file=$(create_exclude_file)
+    
+    log "Using the following exclusion rules for deployment:"
+    cat "$exclude_file" | while read line; do
+        log "  $line"
+    done
+    
     # Sync files to temporary directory first, preserving submodules
     rsync -avz --delete --chmod=Du=rwx,Dg=rx,Do=rx,Fu=rw,Fg=r,Fo=r \
-        --exclude=".git/" \
-        --exclude="vendor/" \
-        --exclude="tests/" \
-        --exclude="node_modules/" \
-        --exclude=".env" \
-        --exclude="deploy.sh" \
-        --exclude="$LOG_FILE" \
-        --exclude="*.log" \
-        --exclude=".gitignore" \
-        --exclude=".DS_Store" \
-        --exclude="*.swp" \
-        --exclude=".gitmodules" \
-        --include="*/public/member/**" \
+        --filter="merge $exclude_file" \
         . "$SERVER:$REMOTE_TEMP_DIR/" || error "Rsync failed"
+    
+    # Clean up temporary file
+    rm -f "$exclude_file"
     
     log "Files synced to temporary directory on server"
     
