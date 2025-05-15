@@ -1,405 +1,309 @@
 #!/usr/bin/env bash
-
-# =========================================================
+#
 # Willhaben.vip Docker Deployment Script
-# =========================================================
+# --------------------------------------
 #
-# This script handles Docker-based deployment for Willhaben.vip
-# on the production server.
+# This script deploys the Willhaben.vip application to production using Docker.
+# It handles container management, volume setup, and health monitoring.
 #
-# Features:
-# - GitHub repository pulling
-# - SSL certificate setup with Let's Encrypt
-# - Docker Compose deployment management
-# - Backup and rollback capabilities
-# - Health checks and logging
+# Usage: ./deploy-docker.sh [option]
 #
-# Usage:
-#   ./deploy-docker.sh [pull|setup|deploy|rollback]
+# Options:
+#   deploy   - Deploy/update the application (default)
+#   backup   - Create a backup only
+#   restore  - Restore from the most recent backup
+#   status   - Check the status of running containers
 #
-# Parameters:
-#   pull     - Pull latest code from GitHub
-#   setup    - Initial setup (directories, certificates)
-#   deploy   - Deploy the application
-#   rollback - Rollback to the previous version
-#
-# =========================================================
 
-# Exit on error
-set -e
+# Exit on error, undefined variables, and pipe failures
+set -euo pipefail
 
 # Configuration
-REPO_URL="https://github.com/willhaben-vip/server.git"
-BRANCH="main"
-BASE_DIR="/opt/willhaben.vip"
-APP_DIR="${BASE_DIR}/app"
-DATA_DIR="${BASE_DIR}/data"
-NGINX_DIR="${BASE_DIR}/nginx"
-BACKUP_DIR="${BASE_DIR}/backups"
-DOMAIN="willhaben.vip"
-LOG_FILE="${BASE_DIR}/deploy-$(date +%Y%m%d%H%M%S).log"
+REMOTE_USER="nikolaos"
+REMOTE_HOST="alonissos.willhaben.vip"
+REMOTE_DIR="/opt/willhaben.vip"
 COMPOSE_FILE="docker-compose.prod.yml"
-GITHUB_TOKEN_FILE="${BASE_DIR}/.github_token"
+LOG_FILE="deploy-$(date +%Y%m%d-%H%M%S).log"
 
-# Initialize log
-mkdir -p "$(dirname "$LOG_FILE")"
-echo "=== Deployment started at $(date) ===" > "$LOG_FILE"
+# Docker container names from docker-compose.prod.yml
+APP_CONTAINER="willhaben_app"
+NGINX_CONTAINER="willhaben_nginx"
+REDIS_CONTAINER="willhaben_storage"
 
-# =========================================================
-# Helper Functions
-# =========================================================
+# Create local logs directory
+mkdir -p logs
+LOG_FILE="logs/${LOG_FILE}"
 
-# Log message to both console and log file
+# Logging functions
 log() {
-    local message="[$(date +"%Y-%m-%d %H:%M:%S")] $1"
-    echo "$message" | tee -a "$LOG_FILE"
+  local level="$1"
+  local message="$2"
+  local timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+  echo "[${timestamp}] [${level}] ${message}" | tee -a "${LOG_FILE}"
 }
 
-# Log error and exit
-error() {
-    log "ERROR: $1"
-    exit 1
+info() { log "INFO" "$1"; }
+warn() { log "WARNING" "$1"; }
+error() { log "ERROR" "$1"; echo "ERROR: $1" >&2; }
+success() { log "SUCCESS" "$1"; echo "✓ $1"; }
+
+# Remote command execution via SSH
+ssh_exec() {
+  local command="$1"
+  local silent="${2:-false}"
+  
+  if [[ "${silent}" == "true" ]]; then
+    ssh -T "${REMOTE_USER}@${REMOTE_HOST}" "${command}" >> "${LOG_FILE}" 2>&1
+    return $?
+  else
+    info "Executing: ${command}"
+    ssh -tt "${REMOTE_USER}@${REMOTE_HOST}" "${command}" 2>&1 | tee -a "${LOG_FILE}"
+    return ${PIPESTATUS[0]}
+  fi
 }
 
-# Check if a command exists
-command_exists() {
-    command -v "$1" >/dev/null 2>&1
-}
-
-# Check if Docker is installed and running
-check_docker() {
-    if ! command_exists docker; then
-        error "Docker is not installed. Please install Docker and try again."
-    fi
-    
-    if ! docker info > /dev/null 2>&1; then
-        error "Docker daemon is not running or you don't have permissions to use it."
-    fi
-    
-    log "Docker is installed and running"
-}
-
-# Check if Docker Compose is installed
-check_docker_compose() {
-    if ! (command -v docker-compose > /dev/null 2>&1 || docker compose version > /dev/null 2>&1); then
-        error "Docker Compose is not installed. Please install Docker Compose and try again."
-    fi
-    
-    log "Docker Compose is installed"
-}
-
-# Create required directories
-create_directories() {
-    log "Creating required directories"
-    
-    mkdir -p "$APP_DIR"
-    mkdir -p "$DATA_DIR/member"
-    mkdir -p "$DATA_DIR/logs/nginx"
-    mkdir -p "$DATA_DIR/logs/app"
-    mkdir -p "$DATA_DIR/config"
-    mkdir -p "$DATA_DIR/redis"
-    mkdir -p "$NGINX_DIR/conf.d"
-    mkdir -p "$NGINX_DIR/ssl"
-    mkdir -p "$BACKUP_DIR"
-    
-    log "Directories created successfully"
-}
-
-# =========================================================
-# Repository Functions
-# =========================================================
-
-# Clone or pull the GitHub repository
-pull_repository() {
-    log "Pulling latest code from GitHub repository"
-    
-    if [ -d "$APP_DIR/.git" ]; then
-        # Repository already exists, pull latest changes
-        cd "$APP_DIR"
-        git fetch origin
-        git reset --hard "origin/$BRANCH"
-        log "Repository updated to latest $BRANCH"
-    else
-        # First time clone
-        if [ -f "$GITHUB_TOKEN_FILE" ]; then
-            # Use token for private repository
-            TOKEN=$(cat "$GITHUB_TOKEN_FILE")
-            AUTH_REPO_URL=$(echo "$REPO_URL" | sed "s|https://|https://$TOKEN@|")
-            git clone -b "$BRANCH" "$AUTH_REPO_URL" "$APP_DIR"
-        else
-            # Public repository
-            git clone -b "$BRANCH" "$REPO_URL" "$APP_DIR"
-        fi
-        log "Repository cloned successfully"
-    fi
-    
-    # Check out latest tag if available
-    cd "$APP_DIR"
-    if git tag | grep -q "^v"; then
-        LATEST_TAG=$(git tag | grep "^v" | sort -V | tail -n 1)
-        git checkout "$LATEST_TAG"
-        log "Checked out latest tag: $LATEST_TAG"
-    fi
-}
-
-# =========================================================
-# SSL Certificate Functions
-# =========================================================
-
-# Setup SSL certificates using Let's Encrypt
-setup_ssl() {
-    log "Setting up SSL certificates with Let's Encrypt"
-    
-    # Check if certificates already exist
-    if [ -f "$NGINX_DIR/ssl/$DOMAIN.crt" ] && [ -f "$NGINX_DIR/ssl/$DOMAIN.key" ]; then
-        # Check expiration date
-        EXPIRATION=$(openssl x509 -in "$NGINX_DIR/ssl/$DOMAIN.crt" -noout -enddate | cut -d= -f2)
-        EXPIRATION_EPOCH=$(date -d "$EXPIRATION" +%s)
-        NOW_EPOCH=$(date +%s)
-        
-        # If certificate expires in more than 30 days, skip renewal
-        if [ $((EXPIRATION_EPOCH - NOW_EPOCH)) -gt 2592000 ]; then
-            log "SSL certificate is valid until $EXPIRATION. Skipping renewal."
-            return 0
-        fi
-    fi
-    
-    # Install Certbot if not already installed
-    if ! command_exists certbot; then
-        log "Installing Certbot"
-        apt-get update
-        apt-get install -y certbot python3-certbot-nginx
-    fi
-    
-    # Obtain or renew certificate
-    log "Obtaining/renewing SSL certificate for $DOMAIN"
-    certbot certonly --standalone -d "$DOMAIN" -d "www.$DOMAIN" --agree-tos --non-interactive --email admin@$DOMAIN
-    
-    # Copy certificates to Nginx directory
-    cp /etc/letsencrypt/live/$DOMAIN/fullchain.pem "$NGINX_DIR/ssl/$DOMAIN.crt"
-    cp /etc/letsencrypt/live/$DOMAIN/privkey.pem "$NGINX_DIR/ssl/$DOMAIN.key"
-    
-    log "SSL certificates installed successfully"
-}
-
-# =========================================================
-# Docker Deployment Functions
-# =========================================================
-
-# Copy configuration files
-copy_config_files() {
-    log "Copying configuration files"
-    
-    # Copy Nginx configuration
-    cp "$APP_DIR/nginx/willhaben.vip.conf" "$NGINX_DIR/conf.d/"
-    
-    # Copy Docker Compose production file
-    cp "$APP_DIR/docker-compose.prod.yml" "$APP_DIR/"
-    
-    log "Configuration files copied successfully"
-}
-
-# Create backup of current deployment
-create_backup() {
-    log "Creating backup of current deployment"
-    
-    local BACKUP_PATH="$BACKUP_DIR/backup_$(date +%Y%m%d%H%M%S)"
-    
-    # Create backup directory
-    mkdir -p "$BACKUP_PATH"
-    
-    # Backup app files
-    rsync -a "$APP_DIR/" "$BACKUP_PATH/app/"
-    
-    # Backup data
-    rsync -a "$DATA_DIR/" "$BACKUP_PATH/data/"
-    
-    # Backup Nginx configuration
-    rsync -a "$NGINX_DIR/" "$BACKUP_PATH/nginx/"
-    
-    log "Backup created at $BACKUP_PATH"
-}
-
-# Deploy application with Docker Compose
-deploy_application() {
-    log "Deploying application with Docker Compose"
-    
-    cd "$APP_DIR"
-    
-    # Pull Docker images
-    if command -v docker-compose > /dev/null 2>&1; then
-        docker-compose -f $COMPOSE_FILE pull
-        # Build and start services
-        docker-compose -f $COMPOSE_FILE up -d --build
-    else
-        docker compose -f $COMPOSE_FILE pull
-        # Build and start services
-        docker compose -f $COMPOSE_FILE up -d --build
-    fi
-    
-    log "Application deployed successfully"
-}
-
-# Check if deployment was successful
-check_deployment() {
-    log "Checking deployment health"
-    
-    # Wait for containers to start
-    sleep 10
-    
-    # Check if all containers are running
-    cd "$APP_DIR"
-    if command -v docker-compose > /dev/null 2>&1; then
-        if ! docker-compose -f $COMPOSE_FILE ps | grep -q "Up"; then
-            log "Warning: Some containers may not be running properly"
-            docker-compose -f $COMPOSE_FILE ps
-            return 1
-        fi
-    else
-        if ! docker compose -f $COMPOSE_FILE ps | grep -q "Up"; then
-            log "Warning: Some containers may not be running properly"
-            docker compose -f $COMPOSE_FILE ps
-            return 1
-        fi
-    fi
-    
-    # Check application health
-    local MAX_RETRIES=12
-    local RETRY_DELAY=5
-    local RETRIES=0
-    
-    while [ $RETRIES -lt $MAX_RETRIES ]; do
-        if curl -sf http://localhost:2114 > /dev/null; then
-            log "Application health check passed"
-            return 0
-        fi
-        
-        log "Waiting for application to be healthy... (retry $((RETRIES+1))/$MAX_RETRIES)"
-        RETRIES=$((RETRIES+1))
-        sleep $RETRY_DELAY
-    done
-    
-    log "Warning: Application health check failed after $MAX_RETRIES retries"
+# Upload a file to the remote server
+upload_file() {
+  local local_file="$1"
+  local remote_path="$2"
+  
+  info "Uploading ${local_file} to ${REMOTE_HOST}:${remote_path}"
+  scp "${local_file}" "${REMOTE_USER}@${REMOTE_HOST}:${remote_path}" >> "${LOG_FILE}" 2>&1
+  if [[ $? -ne 0 ]]; then
+    error "Failed to upload ${local_file}"
     return 1
+  fi
+  success "Upload successful"
 }
 
-# Rollback to previous deployment
-rollback_deployment() {
-    log "Rolling back to previous deployment"
+# Check if a container is healthy
+check_container_health() {
+  local container="$1"
+  local max_attempts="${2:-30}"
+  local delay="${3:-2}"
+  local attempt=1
+  
+  info "Checking health of ${container}..."
+  
+  while [[ $attempt -le $max_attempts ]]; do
+    local status=$(ssh_exec "docker inspect --format='{{.State.Health.Status}}' ${container} 2>/dev/null || echo 'not_found'" true)
     
-    # Find the latest backup
-    local LATEST_BACKUP=$(find "$BACKUP_DIR" -maxdepth 1 -type d -name "backup_*" | sort -r | head -n 1)
-    
-    if [ -z "$LATEST_BACKUP" ]; then
-        error "No backup found to rollback to"
-    fi
-    
-    log "Rolling back to backup: $LATEST_BACKUP"
-    
-    # Stop current deployment
-    cd "$APP_DIR"
-    if command -v docker-compose > /dev/null 2>&1; then
-        docker-compose -f $COMPOSE_FILE down
+    if [[ "${status}" == "healthy" ]]; then
+      success "Container ${container} is healthy"
+      return 0
+    elif [[ "${status}" == "not_found" ]]; then
+      error "Container ${container} not found"
+      return 1
     else
-        docker compose -f $COMPOSE_FILE down
+      info "Container ${container} status: ${status} (attempt ${attempt}/${max_attempts})"
+      ((attempt++))
+      sleep "${delay}"
     fi
-    
-    # Restore from backup
-    rsync -a "$LATEST_BACKUP/app/" "$APP_DIR/"
-    rsync -a "$LATEST_BACKUP/nginx/" "$NGINX_DIR/"
-    
-    # Data is not restored by default to avoid data loss
-    log "Note: Data directory was not restored to avoid data loss"
-    
-    # Start services again
-    cd "$APP_DIR"
-    if command -v docker-compose > /dev/null 2>&1; then
-        docker-compose -f $COMPOSE_FILE up -d
-    else
-        docker compose -f $COMPOSE_FILE up -d
-    fi
-    
-    log "Rollback completed"
+  done
+  
+  error "Container ${container} did not become healthy after ${max_attempts} attempts"
+  return 1
 }
 
-# =========================================================
-# Main Functions
-# =========================================================
+# Prepare the remote server (directories, etc.)
+prepare_server() {
+  info "Preparing remote server..."
+  
+  # Ensure Docker is running
+  if ! ssh_exec "docker ps > /dev/null 2>&1"; then
+    error "Docker is not running on the remote server"
+    return 1
+  fi
+  
+  # Create required directories
+  ssh_exec "mkdir -p ${REMOTE_DIR}/data/member"
+  ssh_exec "mkdir -p ${REMOTE_DIR}/data/logs"
+  ssh_exec "mkdir -p ${REMOTE_DIR}/data/config"
+  ssh_exec "mkdir -p ${REMOTE_DIR}/data/redis"
+  ssh_exec "mkdir -p ${REMOTE_DIR}/nginx/conf.d"
+  ssh_exec "mkdir -p ${REMOTE_DIR}/nginx/ssl"
+  ssh_exec "mkdir -p ${REMOTE_DIR}/data/logs/nginx"
+  ssh_exec "mkdir -p ${REMOTE_DIR}/backups"
+  
+  # Set proper permissions
+  ssh_exec "chmod -R 755 ${REMOTE_DIR}/data"
+  ssh_exec "chmod -R 755 ${REMOTE_DIR}/nginx"
+  
+  # Setup Docker networks if they don't exist
+  if ! ssh_exec "docker network ls | grep -q 'app_network'"; then
+    ssh_exec "docker network create app_network --internal"
+  fi
+  
+  if ! ssh_exec "docker network ls | grep -q 'web_network'"; then
+    ssh_exec "docker network create web_network"
+  fi
+  
+  success "Server preparation complete"
+}
 
-# Initial setup
-setup() {
-    log "Starting initial setup"
-    
-    check_docker
-    check_docker_compose
-    create_directories
-    pull_repository
-    setup_ssl
-    copy_config_files
-    
-    log "Initial setup completed successfully"
+# Create a backup of the current deployment
+create_backup() {
+  local backup_dir="${REMOTE_DIR}/backups/backup-$(date +%Y%m%d-%H%M%S)"
+  info "Creating backup in ${backup_dir}..."
+  
+  # Create backup directory
+  ssh_exec "mkdir -p ${backup_dir}"
+  
+  # Backup docker-compose file
+  ssh_exec "test -f ${REMOTE_DIR}/${COMPOSE_FILE} && cp ${REMOTE_DIR}/${COMPOSE_FILE} ${backup_dir}/" || true
+  
+  # Backup volume data
+  ssh_exec "test -d ${REMOTE_DIR}/data/member && tar -czf ${backup_dir}/member-data.tar.gz -C ${REMOTE_DIR}/data member" || true
+  ssh_exec "test -d ${REMOTE_DIR}/data/config && tar -czf ${backup_dir}/config-data.tar.gz -C ${REMOTE_DIR}/data config" || true
+  ssh_exec "test -d ${REMOTE_DIR}/nginx && tar -czf ${backup_dir}/nginx-data.tar.gz -C ${REMOTE_DIR} nginx" || true
+  
+  # Backup Redis data if Redis container is running
+  if ssh_exec "docker ps | grep -q ${REDIS_CONTAINER}" true; then
+    info "Backing up Redis data..."
+    ssh_exec "docker exec ${REDIS_CONTAINER} redis-cli SAVE" || true
+    ssh_exec "test -d ${REMOTE_DIR}/data/redis && tar -czf ${backup_dir}/redis-data.tar.gz -C ${REMOTE_DIR}/data redis" || true
+  fi
+  
+  # Create backup info file
+  ssh_exec "echo 'Backup created on $(date)' > ${backup_dir}/backup-info.txt"
+  ssh_exec "docker ps > ${backup_dir}/containers.txt" || true
+  
+  success "Backup created at ${backup_dir}"
+}
+
+# Restore from the most recent backup
+restore_backup() {
+  info "Finding the most recent backup..."
+  
+  # Get the most recent backup directory
+  local backup_dir=$(ssh_exec "ls -td ${REMOTE_DIR}/backups/backup-* | head -1" true)
+  
+  if [[ -z "${backup_dir}" ]]; then
+    error "No backup found"
+    return 1
+  fi
+  
+  info "Restoring from backup: ${backup_dir}"
+  
+  # Stop running containers
+  ssh_exec "cd ${REMOTE_DIR} && docker-compose -f ${COMPOSE_FILE} down || docker compose -f ${COMPOSE_FILE} down" || true
+  
+  # Restore docker-compose file
+  ssh_exec "test -f ${backup_dir}/${COMPOSE_FILE} && cp ${backup_dir}/${COMPOSE_FILE} ${REMOTE_DIR}/" || true
+  
+  # Restore data
+  if ssh_exec "test -f ${backup_dir}/member-data.tar.gz" true; then
+    info "Restoring member data..."
+    ssh_exec "tar -xzf ${backup_dir}/member-data.tar.gz -C ${REMOTE_DIR}/data"
+  fi
+  
+  if ssh_exec "test -f ${backup_dir}/config-data.tar.gz" true; then
+    info "Restoring config data..."
+    ssh_exec "tar -xzf ${backup_dir}/config-data.tar.gz -C ${REMOTE_DIR}/data"
+  fi
+  
+  if ssh_exec "test -f ${backup_dir}/nginx-data.tar.gz" true; then
+    info "Restoring Nginx configuration..."
+    ssh_exec "tar -xzf ${backup_dir}/nginx-data.tar.gz -C ${REMOTE_DIR}"
+  fi
+  
+  if ssh_exec "test -f ${backup_dir}/redis-data.tar.gz" true; then
+    info "Restoring Redis data..."
+    ssh_exec "tar -xzf ${backup_dir}/redis-data.tar.gz -C ${REMOTE_DIR}/data"
+  fi
+  
+  # Start containers
+  ssh_exec "cd ${REMOTE_DIR} && docker-compose -f ${COMPOSE_FILE} up -d || docker compose -f ${COMPOSE_FILE} up -d"
+  
+  success "Restore completed from ${backup_dir}"
 }
 
 # Deploy the application
 deploy() {
-    log "Starting deployment process"
-    
-    # Verify Docker is running
-    check_docker
-    
-    # Create backup before deployment
-    create_backup
-    
-    # Pull latest code
-    pull_repository
-    
-    # Copy configuration files
-    copy_config_files
-    
-    # Deploy application
-    deploy_application
-    
-    # Check deployment health
-    if ! check_deployment; then
-        log "Deployment health check failed. Consider rollback."
-    fi
-    
-    log "Deployment process completed"
+  info "Starting deployment..."
+  
+  # Prepare server
+  prepare_server
+  
+  # Create backup before changes
+  create_backup
+  
+  # Upload docker-compose file
+  if ! upload_file "${COMPOSE_FILE}" "${REMOTE_DIR}/${COMPOSE_FILE}"; then
+    error "Failed to upload docker-compose.yml"
+    return 1
+  fi
+  
+  # Pull latest images
+  info "Pulling latest Docker images..."
+  ssh_exec "cd ${REMOTE_DIR} && docker-compose -f ${COMPOSE_FILE} pull || docker compose -f ${COMPOSE_FILE} pull"
+  
+  # Stop and remove existing containers
+  info "Stopping existing containers..."
+  ssh_exec "cd ${REMOTE_DIR} && docker-compose -f ${COMPOSE_FILE} down || docker compose -f ${COMPOSE_FILE} down" || true
+  
+  # Start containers
+  info "Starting containers..."
+  ssh_exec "cd ${REMOTE_DIR} && docker-compose -f ${COMPOSE_FILE} up -d || docker compose -f ${COMPOSE_FILE} up -d"
+  
+  # Wait for containers to be healthy
+  sleep 5
+  if ! check_container_health "${APP_CONTAINER}" 30 2; then
+    warn "Application container not healthy, but continuing..."
+  fi
+  
+  if ! check_container_health "${NGINX_CONTAINER}" 30 2; then
+    warn "Nginx container not healthy, but continuing..."
+  fi
+  
+  # Check deployment status
+  info "Checking deployment status..."
+  ssh_exec "cd ${REMOTE_DIR} && docker-compose -f ${COMPOSE_FILE} ps || docker compose -f ${COMPOSE_FILE} ps"
+  
+  success "Deployment completed successfully"
 }
 
-# =========================================================
-# Main Script
-# =========================================================
+# Check status of running containers
+check_status() {
+  info "Checking status of containers..."
+  
+  ssh_exec "docker ps --filter 'name=willhaben_'"
+  ssh_exec "docker stats --no-stream --filter 'name=willhaben_'"
+  
+  # Check health status
+  local app_health=$(ssh_exec "docker inspect --format='{{.State.Health.Status}}' ${APP_CONTAINER} 2>/dev/null || echo 'not_found'" true)
+  local nginx_health=$(ssh_exec "docker inspect --format='{{.State.Health.Status}}' ${NGINX_CONTAINER} 2>/dev/null || echo 'not_found'" true)
+  local redis_health=$(ssh_exec "docker inspect --format='{{.State.Health.Status}}' ${REDIS_CONTAINER} 2>/dev/null || echo 'not_found'" true)
+  
+  info "Health status:"
+  info "- Application: ${app_health}"
+  info "- Nginx: ${nginx_health}"
+  info "- Redis: ${redis_health}"
+  
+  success "Status check completed"
+}
 
+# Main function
 main() {
-    local command="${1:-deploy}"
-    
-    case "$command" in
-        pull)
-            pull_repository
-            ;;
-        setup)
-            setup
-            ;;
-        deploy)
-            deploy
-            ;;
-        rollback)
-            rollback_deployment
-            ;;
-        *)
-            echo "Unknown command: $command"
-            echo "Usage: $0 [pull|setup|deploy|rollback]"
-            exit 1
-            ;;
-    esac
-    
-    log "Command '$command' completed successfully"
-    echo "==============================================" | tee -a "$LOG_FILE"
-    echo "See $LOG_FILE for deployment details" | tee -a "$LOG_FILE"
-    echo "==============================================" | tee -a "$LOG_FILE"
+  local command="${1:-deploy}"
+  
+  case "${command}" in
+    deploy)
+      deploy
+      ;;
+    backup)
+      create_backup
+      ;;
+    restore)
+      restore_backup
+      ;;
+    status)
+      check_status
+      ;;
+    *)
+      error "Unknown command: ${command}"
+      echo "Usage: $0 [deploy|backup|restore|status]"
+      exit 1
+      ;;
+  esac
 }
-
-# Run main function with provided arguments
-main "$@"
-
