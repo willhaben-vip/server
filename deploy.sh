@@ -33,7 +33,7 @@ REMOTE_DIR="/var/www/willhaben.vip"
 VERSION_FILE="VERSION"
 ROADRUNNER_SERVICE="roadrunner"
 REMOTE_TEMP_DIR="/home/nikolaos/willhaben_deploy_tmp"
-REMOTE_BACKUP_DIR="${REMOTE_DIR}_backup_$(date +%Y%m%d%H%M%S)"
+REMOTE_BACKUP_DIR="/home/nikolaos/backups/willhaben_backup_$(date +%Y%m%d%H%M%S)"
 LOG_FILE="deployment_$(date +%Y%m%d%H%M%S).log"
 
 # Initialize log
@@ -390,14 +390,14 @@ deploy_files() {
         error "Files were not successfully transferred to the temporary directory"
     fi
     
-    # Backup existing installation if it exists
-    ssh "$SERVER" "if [ -d $REMOTE_DIR ]; then sudo cp -a $REMOTE_DIR $REMOTE_BACKUP_DIR && sudo chown -R nikolaos:nikolaos $REMOTE_BACKUP_DIR; fi"
+    # Create backup directory if it doesn't exist
+    ssh "$SERVER" "mkdir -p $(dirname $REMOTE_BACKUP_DIR)"
     
-    # Ensure target directory exists with correct permissions
-    ssh "$SERVER" "sudo mkdir -p $REMOTE_DIR && sudo chown nikolaos:nikolaos $REMOTE_DIR"
+    # Backup existing installation if it exists
+    ssh "$SERVER" "if [ -d $REMOTE_DIR ]; then cp -a $REMOTE_DIR $REMOTE_BACKUP_DIR; fi"
     
     # Move files from temp directory to actual directory
-    ssh "$SERVER" "sudo rsync -a --delete --no-perms $REMOTE_TEMP_DIR/ $REMOTE_DIR/ && sudo chown -R nikolaos:nikolaos $REMOTE_DIR && rm -rf $REMOTE_TEMP_DIR"
+    ssh "$SERVER" "rsync -a --delete --no-perms $REMOTE_TEMP_DIR/ $REMOTE_DIR/ && rm -rf $REMOTE_TEMP_DIR"
     
     # Report the deployed submodule status
     log "Verifying deployed submodule content"
@@ -413,7 +413,7 @@ install_dependencies() {
     ssh "$SERVER" "cd $REMOTE_DIR && \
         if ! command -v composer > /dev/null; then \
             curl -sS https://getcomposer.org/installer | php && \
-            sudo mv composer.phar /usr/local/bin/composer; \
+            php composer.phar; \
         fi && \
         composer clear-cache && \
         composer config --global process-timeout 2000 && \
