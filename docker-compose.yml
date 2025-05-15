@@ -4,17 +4,18 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8080:8080"      # Application
-      - "2114:2114"      # Health/Status
-      - "2112:2112"      # Metrics
+      - "8070:8069"      # Application
+      - "2115:2114"      # Health/Status
+      - "2113:2112"      # Metrics
     volumes:
-      - ./public:/app/public
+      - ../member:/app/public/member
       - ./logs:/app/logs
+      - ./server:/app/server  # Add this line to mount the server directory
     environment:
       - APP_ENV=production
       - TZ=Europe/Vienna
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:2114"]
+      test: ["CMD", "curl", "-f", "http://localhost:2115"]
       interval: 30s
       timeout: 10s
       retries: 3

@@ -1,36 +1,49 @@
 version: "3.0"
 
 http:
-  address: "0.0.0.0:8080"
-  static:
-    dir: "public"
-    forbid: [".htaccess", "*.json", "*.py"]
-    allow: ["index.php", "*.jpg", "*.jpeg", "*.png", "*.gif", "*.css", "*.js", "*.xml"]
-    calculate_etag: true
-    weak: false
-  middleware: ["static", "gzip"]
+  address: "0.0.0.0:8069"
+  middleware: ["headers", "gzip"]  # Use PHP for file serving instead of middleware
+  max_request_size: 268435456  # 256 * 1024 * 1024 bytes = 256MB
+  headers:
+    cors:
+      allowedOrigins: ["*"]
+      allowedMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+      allowedHeaders: ["Origin", "Content-Type", "Accept", "Authorization"]
+      exposedHeaders: ["Content-Length"]
+      allowCredentials: true
+      maxAge: 600
+    # Response headers for all requests
+    response:
+      X-Powered-By: "RoadRunner"
+      X-Content-Type-Options: "nosniff"
+      X-Frame-Options: "DENY"
+      # No-cache for development to see changes immediately
+      Cache-Control: "no-cache, no-store, must-revalidate"
   pool:
     num_workers: 1
-    max_jobs: 1    # Process one request per worker
+    max_jobs: 0    # Unlimited jobs per worker
     allocate_timeout: 60s
-    debug: true
+    debug: false
     supervisor:
       exec_ttl: 60s
     
 server:
-  command: "php .rr-worker.php"
+  command: "php -d display_errors=1 -d error_reporting=E_ALL .rr-worker.php"
   env_map:
     APP_ENV: "production"
     DISPLAY_ERRORS: "1"
     ERROR_REPORTING: "32767"
     DEBUG: "1"
+    # Add environment variable to enable detailed logging in PHP worker
+    RR_DEBUG: "2"
+    LOG_LEVEL: "debug"
   relay: "pipes"
   
 logs:
   mode: development
   level: debug
   encoding: json
-  output: "stderr"
+  output: "stdout"
   err_output: "stderr"
   
 reload:
@@ -40,13 +53,15 @@ reload:
     http:
       recursive: true
       dirs: ["public"]
-      
+
+# File service configuration for direct file handling      
+
 health:
-  address: "0.0.0.0:2114"
+  address: "0.0.0.0:2115"
   timeout: 5s
 
 status:
-  address: "0.0.0.0:2114"
+  address: "0.0.0.0:2116"
 
 metrics:
   address: "0.0.0.0:2112"
@@ -55,8 +70,12 @@ metrics:
 debug:
   log_allocated: true        # Log worker allocation details
   max_request_size: 64
-  output: "stderr"          # Direct output to stderr
+  output: "stdout"          # Direct output to stdout for better visibility
   log_level: 5              # Maximum verbosity (values 0-5)
+  request_debug: true       # Show detailed request information
+  middleware_debug: true    # Show middleware processing information
+  http_debug: true          # Log HTTP-specific debug information
+  static_debug: true        # Enable specific debug for static file serving
 
 # Enable HTTP plugin reload on errors
 limit:

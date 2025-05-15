@@ -1,7 +1,7 @@
 version: "3.0"
 
 http:
-  address: "0.0.0.0:8080"
+  address: "0.0.0.0:8069"
   static:
     dir: "public"
     forbid: [".htaccess", "*.json", "*.py"]

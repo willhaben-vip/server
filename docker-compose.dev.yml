@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile.dev
     ports:
-      - "8080:8080"      # Application
+      - "8069:8069"      # Application
       - "2114:2114"      # Health/Status
       - "2112:2112"      # Metrics
       - "9003:9003"      # Xdebug
