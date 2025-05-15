@@ -23,9 +23,15 @@ define('LOG_FILE', REDIRECT_LOG_FILE);
 
 // Application constants
 define('BASE_URL', 'https://willhaben.vip');
+define('WILLHABEN_AT_BASE_URL', 'https://willhaben.at');
+define('DEFAULT_SELLER_SLUG', 'rene.kapusta');
 define('SELLER_MAP', [
     '34434899' => 'rene.kapusta'
 ]);
+
+// Tracking system constants
+define('TRACKING_STORAGE_TYPE', 'sqlite'); // Options: 'sqlite' or 'json'
+define('TRACKING_STORAGE_PATH', APP_ROOT . '/data/redirect_tracking.' . (TRACKING_STORAGE_TYPE === 'sqlite' ? 'db' : 'json'));
 
 // Ensure log directories exist with proper permissions
 foreach ([LOG_DIR, APPLICATION_LOG_DIR, ROADRUNNER_LOG_DIR] as $dir) {

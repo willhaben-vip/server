@@ -6,10 +6,12 @@ namespace Willhaben\RedirectService;
  */
 class RedirectService {
     private Logger $logger;
+    private ?RedirectTracker $tracker = null;
     private const DEFAULT_REDIRECT_STATUS = 301; // Always use permanent redirects
 
     public function __construct(Logger $logger) {
         $this->logger = $logger;
+        $this->tracker = new RedirectTracker($logger);
     }
 
     /**
@@ -81,5 +83,47 @@ class RedirectService {
         $this->logger->debug("Processing default redirect to homepage");
         throw new RedirectException(BASE_URL, self::DEFAULT_REDIRECT_STATUS);
     }
+    
+    /**
+     * Handle a marketplace redirect: willhaben.vip/<username slug>/marketplace/<article id>
+     * Redirects to: https://willhaben.at/iad/object?adId=<article id>
+     */
+    public function handleMarketplaceRedirect(string $usernameSlug, string $articleId): void {
+        $this->logger->debug("Processing marketplace redirect", [
+            'username' => $usernameSlug,
+            'article_id' => $articleId
+        ]);
+        
+        // Track this redirect
+        if ($this->tracker) {
+            $this->tracker->trackRedirect($articleId);
+        }
+        
+        // Construct the redirect URL
+        $url = WILLHABEN_AT_BASE_URL . '/iad/object?adId=' . $articleId;
+        
+        $this->logger->redirect($url, self::DEFAULT_REDIRECT_STATUS);
+        throw new RedirectException($url, self::DEFAULT_REDIRECT_STATUS);
+    }
+    
+    /**
+     * Transform a direct buy link to our marketplace pattern
+     * Example: https://www.willhaben.at/iad/kaufen-und-verkaufen/d/10-x-dvd-kinder-ab-0-1-6-1141031082/?checkoutMode=direct
+     * To: willhaben.vip/<username slug>/marketplace/<article id>
+     */
+    public function transformDirectBuyLink(string $directBuyUrl, ?string $usernameSlug = null): string {
+        // Extract article ID from URL
+        if (preg_match('/-(\d+)\/?(\?|$)/', $directBuyUrl, $matches)) {
+            $articleId = $matches[1];
+            
+            // Use provided username slug or default
+            $slug = $usernameSlug ?: DEFAULT_SELLER_SLUG;
+            
+            return BASE_URL . '/' . $slug . '/marketplace/' . $articleId;
+        }
+        
+        // If unable to parse, return original URL
+        $this->logger->debug("Unable to transform direct buy link", ['url' => $directBuyUrl]);
+        return $directBuyUrl;
+    }
 }
-
