@@ -7,13 +7,15 @@
 # database operations, and Laravel optimization.
 #
 # Usage:
-#   ./deploy.production.sh -e <environment> -m <release message> [-f] [-b] [-h]
+#   ./deploy.production.sh -e <environment> -m <release message> [-f] [-b] [-l] [-h]
 #
 # Options:
 #   -e, --environment    Environment to deploy to (production, staging)
 #   -m, --message        Release message/description
 #   -f, --force          Force deployment even if validation fails
 #   -b, --backup         Create full backup before deployment
+#   --no-backup          Skip backup creation
+#   -l, --local          Run in local testing mode (for CI/CD and testing)
 #   -h, --help           Show this help message
 #
 
@@ -25,29 +27,44 @@ readonly SCRIPT_NAME=$(basename "$0")
 readonly SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 readonly TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
 readonly LOG_FILE="${SCRIPT_DIR}/../logs/deploy-${TIMESTAMP}.log"
-readonly REMOTE_USER="nikolaos"
-readonly REMOTE_HOST="alonnisos.willhaben.vip"
-readonly REMOTE_DIR="/home/nikolaos/vps/INSTANTpay"
-readonly DOCKER_COMPOSE_FILE="${REMOTE_DIR}/web-app/docker-compose.yml"
-readonly BACKUP_DIR="${REMOTE_DIR}/backups/${TIMESTAMP}"
+readonly DEFAULT_REMOTE_USER="nikolaos"
+readonly DEFAULT_REMOTE_HOST="alonnisos.willhaben.vip"
+readonly DEFAULT_REMOTE_DIR="/home/nikolaos/vps/INSTANTpay"
+readonly DEFAULT_DOCKER_COMPOSE_FILE="web-app/docker-compose.yml"
+
+# These variables will be set based on local or remote mode
+REMOTE_USER="${DEFAULT_REMOTE_USER}"
+REMOTE_HOST="${DEFAULT_REMOTE_HOST}"
+REMOTE_DIR="${DEFAULT_REMOTE_DIR}"
+DOCKER_COMPOSE_FILE="${DEFAULT_REMOTE_DIR}/${DEFAULT_DOCKER_COMPOSE_FILE}"
+BACKUP_DIR=""  # Will be set during initialization
 
 # Docker image and container configurations
 readonly DOCKER_IMAGE_APP="ghcr.io/bankpay-plus/instantpay:latest"
 readonly DOCKER_IMAGE_NGINX="ghcr.io/bankpay-plus/instantpay-nginx:latest"
-readonly LARAVEL_CONTAINER="web-app-laravel.production-1"
-readonly NGINX_CONTAINER="web-app-nginx-1"
+readonly LARAVEL_CONTAINER="instantpay-test-app"
+readonly NGINX_CONTAINER="instantpay-test-nginx"
 
 # Health check configurations
 readonly HEALTH_CHECK_URL="http://localhost"
-readonly HEALTH_CHECK_PORT="8070"
+readonly HEALTH_CHECK_PORT="18070"
 readonly HEALTH_CHECK_TIMEOUT=5  # seconds
 readonly HEALTH_CHECK_RETRIES=3
 
+# Default values
 # Default values
 ENVIRONMENT=""
 RELEASE_MESSAGE=""
 FORCE_DEPLOY=false
 CREATE_BACKUP=true
+LOCAL_MODE=false
+
+# Local testing configuration
+LOCAL_NETWORK="instantpay-test-network"
+LOCAL_APP_VOLUME="instantpay-test-app"
+LOCAL_NGINX_VOLUME="instantpay-test-nginx"
+LOCAL_APP_CONTAINER="instantpay-test-app"
+LOCAL_NGINX_CONTAINER="instantpay-test-nginx"
 
 # Create logs directory if it doesn't exist
 mkdir -p "${SCRIPT_DIR}/../logs"
@@ -81,13 +98,15 @@ success() {
 # Function to display usage information
 show_usage() {
   cat << EOF
-Usage: ${SCRIPT_NAME} -e <environment> -m <release message> [-f] [-b] [-h]
+Usage: ${SCRIPT_NAME} -e <environment> -m <release message> [-f] [-b] [-l] [-h]
 
 Options:
   -e, --environment    Environment to deploy to (production, staging)
   -m, --message        Release message/description
   -f, --force          Force deployment even if validation fails
   -b, --backup         Create full backup before deployment (default: true)
+  --no-backup          Skip backup creation
+  -l, --local          Run in local testing mode (for CI/CD and testing)
   -h, --help           Show this help message
 EOF
 }
@@ -116,6 +135,10 @@ parse_args() {
         CREATE_BACKUP=false
         shift
         ;;
+      -l|--local)
+        LOCAL_MODE=true
+        shift
+        ;;
       -h|--help)
         show_usage
         exit 0
@@ -135,7 +158,8 @@ parse_args() {
     exit 1
   fi
 
-  if [[ "${ENVIRONMENT}" != "production" && "${ENVIRONMENT}" != "staging" ]]; then
+  # Validate environment unless in local mode where testing is allowed
+  if [[ "${LOCAL_MODE}" != "true" && "${ENVIRONMENT}" != "production" && "${ENVIRONMENT}" != "staging" ]]; then
     error "Environment must be 'production' or 'staging'"
     show_usage
     exit 1
@@ -148,18 +172,70 @@ parse_args() {
   fi
 }
 
-# Function to execute SSH commands
+# Initialize deployment configuration based on local or remote mode
+initialize_deployment_config() {
+  if [[ "${LOCAL_MODE}" == "true" ]]; then
+    info "Initializing local deployment configuration"
+    
+    # Set local configuration
+    REMOTE_USER="local"
+    REMOTE_HOST="localhost"
+    REMOTE_DIR="$(pwd)"
+    DOCKER_COMPOSE_FILE="${REMOTE_DIR}/docker-compose.yml"
+    
+    # Override container names for local testing
+    LARAVEL_CONTAINER="${LOCAL_APP_CONTAINER}"
+    NGINX_CONTAINER="${LOCAL_NGINX_CONTAINER}"
+    
+    # Set local backup directory
+    BACKUP_DIR="${REMOTE_DIR}/backups/${TIMESTAMP}"
+  else
+    info "Initializing remote deployment configuration"
+    
+    # Use default remote configuration
+    REMOTE_USER="${DEFAULT_REMOTE_USER}"
+    REMOTE_HOST="${DEFAULT_REMOTE_HOST}"
+    REMOTE_DIR="${DEFAULT_REMOTE_DIR}"
+    DOCKER_COMPOSE_FILE="${REMOTE_DIR}/${DEFAULT_DOCKER_COMPOSE_FILE}"
+    
+    # Set remote backup directory
+    BACKUP_DIR="${REMOTE_DIR}/backups/${TIMESTAMP}"
+  fi
+  
+  # Log the configuration
+  info "Deployment configuration:"
+  info "- Mode: $(if [[ "${LOCAL_MODE}" == "true" ]]; then echo "Local"; else echo "Remote"; fi)"
+  info "- Environment: ${ENVIRONMENT}"
+  info "- Host: ${REMOTE_HOST}"
+  info "- Docker Compose file: ${DOCKER_COMPOSE_FILE}"
+  info "- Backup directory: ${BACKUP_DIR}"
+}
+
+# Function to execute commands (SSH for remote, local for local mode)
 ssh_exec() {
   local command="$1"
   local silent="${2:-false}"
   
-  if [[ "${silent}" == "true" ]]; then
-    ssh -T "${REMOTE_USER}@${REMOTE_HOST}" "${command}" >> "${LOG_FILE}" 2>&1
-    return $?
+  if [[ "${LOCAL_MODE}" == "true" ]]; then
+    # Execute locally in local mode
+    if [[ "${silent}" == "true" ]]; then
+      eval "${command}" >> "${LOG_FILE}" 2>&1
+      return $?
+    else
+      info "Executing locally: ${command}"
+      eval "${command}" 2>&1 | tee -a "${LOG_FILE}"
+      return ${PIPESTATUS[0]}
+    fi
   else
-    info "Executing: ${command}"
-    ssh -tt "${REMOTE_USER}@${REMOTE_HOST}" "${command}" 2>&1 | tee -a "${LOG_FILE}"
-    return ${PIPESTATUS[0]}
+    # Execute via SSH in remote mode
+    if [[ "${silent}" == "true" ]]; then
+      ssh -T "${REMOTE_USER}@${REMOTE_HOST}" "${command}" >> "${LOG_FILE}" 2>&1
+      return $?
+    else
+      info "Executing via SSH: ${command}"
+      ssh -tt "${REMOTE_USER}@${REMOTE_HOST}" "${command}" 2>&1 | tee -a "${LOG_FILE}"
+      return ${PIPESTATUS[0]}
+    fi
   fi
 }
 
@@ -195,11 +271,19 @@ check_container_health() {
 
 # Function to validate remote environment
 validate_environment() {
-  info "Validating remote environment..."
+  if [[ "${LOCAL_MODE}" == "true" ]]; then
+    info "Validating local environment..."
+  else
+    info "Validating remote environment..."
+  fi
   
   # Check if Docker is running
   if ! ssh_exec "docker ps > /dev/null 2>&1"; then
-    error "Docker is not running on remote server"
+    if [[ "${LOCAL_MODE}" == "true" ]]; then
+      error "Docker is not running on local machine"
+    else
+      error "Docker is not running on remote server"
+    fi
     return 1
   fi
   
@@ -209,10 +293,14 @@ validate_environment() {
     return 1
   fi
   
-  # Check if .env files exist
-  if ! ssh_exec "test -f ${REMOTE_DIR}/web-app/.env.production"; then
-    error "Production environment file not found: ${REMOTE_DIR}/web-app/.env.production"
-    return 1
+  # In local mode, we might not need the production .env file
+  if [[ "${LOCAL_MODE}" != "true" ]]; then
+    # Check if .env files exist in remote mode
+    local env_path="${REMOTE_DIR}/web-app/.env.${ENVIRONMENT}"
+    if ! ssh_exec "test -f ${env_path}"; then
+      error "Environment file not found: ${env_path}"
+      return 1
+    fi
   fi
   
   # Check disk space
@@ -231,18 +319,7 @@ validate_environment() {
 
 # Function to create backup
 create_backup() {
-  if [[ "${CREATE_BACKUP}" != "true" ]]; then
-    info "Skipping backup as requested"
-    return 0
-  fi
-  
-  info "Creating backup in ${BACKUP_DIR}..."
-  
-  # Create backup directory
-  if ! ssh_exec "mkdir -p ${BACKUP_DIR}"; then
-    error "Failed to create backup directory"
-    return 1
-  fi
+  if
   
   # Backup volumes
   if ! ssh_exec "docker volume inspect web-app_sail-instantpay > /dev/null 2>&1"; then

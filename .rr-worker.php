@@ -6,7 +6,14 @@
 use Willhaben\RedirectService\Logger;
 use Willhaben\RedirectService\RedirectService;
 use Willhaben\RedirectService\RedirectException;
+use Willhaben\RedirectService\RedirectTracker;
+use Willhaben\RedirectService\ArticleFetcher;
+use Willhaben\RedirectService\ArticleUpdateJob;
+use Willhaben\RedirectService\ArticleUpdateScheduler;
 use Nyholm\Psr7;
+use Spiral\RoadRunner\Jobs\Jobs as RRJobs;
+use Spiral\RoadRunner\Jobs\Consumer;
+use Spiral\RoadRunner\Worker;
 
 // Setup error handling
 ini_set('display_errors', 'stderr');
@@ -21,6 +28,61 @@ require_once __DIR__ . '/vendor/autoload.php';
 // Initialize logger
 $logger = new Logger(WORKER_LOG_FILE, 'WORKER');
 $logger->debug("Starting worker");
+
+// Service container for dependency sharing
+class ServiceContainer {
+    private static ?Logger $logger = null;
+    private static ?RedirectService $redirectService = null;
+    private static ?RedirectTracker $redirectTracker = null;
+    private static ?ArticleFetcher $articleFetcher = null;
+    private static ?ArticleUpdateJob $articleUpdateJob = null;
+    private static ?ArticleUpdateScheduler $articleUpdateScheduler = null;
+    
+    public static function getLogger(): Logger {
+        if (self::$logger === null) {
+            self::$logger = new Logger(WORKER_LOG_FILE, 'WORKER');
+        }
+        return self::$logger;
+    }
+    
+    public static function getRedirectTracker(): RedirectTracker {
+        if (self::$redirectTracker === null) {
+            self::$redirectTracker = new RedirectTracker(self::getLogger());
+        }
+        return self::$redirectTracker;
+    }
+    
+    public static function getRedirectService(): RedirectService {
+        if (self::$redirectService === null) {
+            self::$redirectService = new RedirectService(new Logger(REDIRECT_LOG_FILE, 'APP'));
+        }
+        return self::$redirectService;
+    }
+    
+    public static function getArticleFetcher(): ArticleFetcher {
+        if (self::$articleFetcher === null) {
+            self::$articleFetcher = new ArticleFetcher(self::getLogger(), self::getRedirectTracker());
+        }
+        return self::$articleFetcher;
+    }
+    
+    public static function getArticleUpdateJob(): ArticleUpdateJob {
+        if (self::$articleUpdateJob === null) {
+            self::$articleUpdateJob = new ArticleUpdateJob(self::getLogger());
+        }
+        return self::$articleUpdateJob;
+    }
+    
+    public static function getArticleUpdateScheduler(): ArticleUpdateScheduler {
+        if (self::$articleUpdateScheduler === null) {
+            self::$articleUpdateScheduler = new ArticleUpdateScheduler(
+                self::getLogger(), 
+                self::getArticleFetcher()
+            );
+        }
+        return self::$articleUpdateScheduler;
+    }
+}
 
 function serveStaticFile(string $path, Psr7\Factory\Psr17Factory $psrFactory, Logger $logger): \Psr\Http\Message\ResponseInterface {
     // Use relative path structure based on current directory
@@ -305,12 +367,46 @@ function redirectToSignup(Psr7\Factory\Psr17Factory $psrFactory, Logger $logger)
         ->withBody($psrFactory->createStream(''));
 }
 
-try {
-    // Initialize redirect service
-    $redirectService = new RedirectService(new Logger(REDIRECT_LOG_FILE, 'APP'));
+// Process scheduled article update jobs
+function processArticleUpdateJobs(Worker $worker, Logger $logger): void {
+    $logger->debug("Starting article update job consumer");
+    
+    $jobs = new RRJobs($worker);
+    $consumer = new Consumer($jobs);
+    
+    // Get the handler
+    $articleUpdateJob = ServiceContainer::getArticleUpdateJob();
+    $articleUpdateJob->initialize();
+    
+    // Register job handler
+    $consumer->registerHandler('article-update-job', function ($task, $queue) use ($articleUpdateJob) {
+        $articleUpdateJob->process($task);
+    });
+    
+    // Start consuming jobs
+    $consumer->consume();
+}
 
-    // Create worker
-    $worker = Spiral\RoadRunner\Worker::create();
+try {
+    // Get the basic RoadRunner worker
+    $worker = Worker::create();
+    
+    // Get services through container
+    $logger = ServiceContainer::getLogger();
+    $redirectService = ServiceContainer::getRedirectService();
+
+    // Check for job-mode vs HTTP-mode
+    if (getenv('RR_MODE') === 'jobs') {
+        // Process jobs mode
+        $logger->debug("Worker starting in JOBS mode");
+        processArticleUpdateJobs($worker, $logger);
+        exit(0);
+    }
+    
+    // Otherwise, handle HTTP requests
+    $logger->debug("Worker starting in HTTP mode");
+    
+    // Create HTTP worker
     $psrFactory = new Psr7\Factory\Psr17Factory();
     $psr7 = new Spiral\RoadRunner\Http\PSR7Worker($worker, $psrFactory, $psrFactory, $psrFactory);
     
@@ -445,8 +541,39 @@ try {
                 // Process the request based on URL pattern
                 if (preg_match('#^/iad/kaufen-und-verkaufen/verkaeuferprofil/([0-9]+)/?$#i', $path, $matches)) {
                     $redirectService->handleSellerRedirect($matches[1]);
+                } elseif (preg_match('#^/iad/kaufen-und-verkaufen/seller-profile/([0-9]+)/?$#i', $path, $matches)) {
+                    $redirectService->handleSellerRedirect($matches[1]);
+                } elseif (preg_match('#^/iad/user/([0-9]+)/?$#i', $path, $matches)) {
+                    $redirectService->handleSellerRedirect($matches[1]);
                 } elseif (preg_match('#^/iad/kaufen-und-verkaufen/d/([\w-]+)-([0-9]+)/?$#i', $path, $matches)) {
                     $redirectService->handleProductRedirect($matches[1], $matches[2]);
+                } elseif (preg_match('#^/api/update-articles$#i', $path)) {
+                    // Manual trigger for updating all articles
+                    $articleUpdateJob = ServiceContainer::getArticleUpdateJob();
+                    $result = $articleUpdateJob->triggerManualUpdate();
+                    
+                    $response = $psrFactory->createResponse(200)
+                        ->withHeader('Content-Type', 'application/json')
+                        ->withBody($psrFactory->createStream(json_encode($result)));
+                    
+                    $psr7->respond($response);
+                    continue;
+                } elseif (preg_match('#^/api/update-seller/([0-9]+)$#i', $path, $matches)) {
+                    // Manual trigger for updating a specific seller
+                    $sellerId = $matches[1];
+                    $articleFetcher = ServiceContainer::getArticleFetcher();
+                    $result = $articleFetcher->fetchSellerArticles($sellerId);
+                    
+                    $response = $psrFactory->createResponse(200)
+                        ->withHeader('Content-Type', 'application/json')
+                        ->withBody($psrFactory->createStream(json_encode([
+                            'success' => ($result !== null),
+                            'seller_id' => $sellerId,
+                            'articles_count' => ($result !== null) ? count($result) : 0
+                        ])));
+                    
+                    $psr7->respond($response);
+                    continue;
                 } else {
                     // Instead of redirecting to BASE_URL, redirect to /signup
                     $logger->debug("Unmatched path, redirecting to signup page");

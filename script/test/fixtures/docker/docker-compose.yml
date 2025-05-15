@@ -1,0 +1,27 @@
+services:
+  laravel.production:
+    image: ghcr.io/bankpay-plus/instantpay:latest
+    ports:
+      - "8070:8069"
+    volumes:
+      - sail-instantpay:/app
+    environment:
+      - APP_ENV=production
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8069"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  nginx:
+    image: ghcr.io/bankpay-plus/instantpay-nginx:latest
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - sail-nginx:/etc/nginx/conf.d
+    depends_on:
+      - laravel.production
+    restart: unless-stopped
