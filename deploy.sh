@@ -127,6 +127,51 @@ check_git() {
     fi
 }
 
+# Initialize and update git submodules
+init_update_submodules() {
+    log "Initializing and updating git submodules"
+    
+    # Check if submodules exist
+    if [ -f ".gitmodules" ]; then
+        # Initialize submodules if not already done
+        git submodule init || error "Failed to initialize git submodules"
+        
+        # Update submodules to latest commit on their tracked branch
+        git submodule update --remote --recursive || error "Failed to update git submodules"
+        
+        log "Git submodules initialized and updated successfully"
+    else
+        log "No git submodules found (.gitmodules file not present)"
+    fi
+}
+
+# Check if git submodules are properly initialized and updated
+check_submodules() {
+    log "Checking git submodule status"
+    
+    # Check if submodules exist
+    if [ -f ".gitmodules" ]; then
+        # Get submodule status and check for issues
+        local submodule_status=$(git submodule status)
+        
+        # Check for uninitialized submodules (those with a "-" prefix)
+        if echo "$submodule_status" | grep -q "^-"; then
+            error "Uninitialized git submodules found. Run 'git submodule init && git submodule update' first."
+        fi
+        
+        # Check for modified submodules (those with a "+" prefix)
+        if echo "$submodule_status" | grep -q "^+"; then
+            log "Warning: Some submodules have modified content. This might not match the tracked commit."
+            log "Submodule status: \n$submodule_status"
+            log "Continuing with deployment, but consider running 'git submodule update' first for consistency."
+        else
+            log "Git submodules are properly initialized and at the correct commits"
+        fi
+    else
+        log "No git submodules found (.gitmodules file not present)"
+    fi
+}
+
 # Check if git working tree is clean
 check_git_clean() {
     check_git
@@ -136,7 +181,13 @@ check_git_clean() {
         error "Git working tree is not clean. Please commit or stash your changes before deploying."
     fi
     
-    log "Git working tree is clean. Proceeding with deployment."
+    # Check if submodules are in a clean state
+    git submodule foreach 'if [ -n "$(git status --porcelain)" ]; then exit 1; fi' > /dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        error "One or more git submodules have uncommitted changes. Please commit or stash these changes before deploying."
+    fi
+    
+    log "Git working tree and submodules are clean. Proceeding with deployment."
 }
 
 # Create a git tag for the current version and push it
@@ -180,7 +231,7 @@ deploy_files() {
     # Create temporary directory on remote server
     ssh "$SERVER" "mkdir -p $REMOTE_TEMP_DIR"
     
-    # Sync files to temporary directory first
+    # Sync files to temporary directory first, preserving submodules
     rsync -avz --delete \
         --exclude=".git/" \
         --exclude="vendor/" \
@@ -193,6 +244,8 @@ deploy_files() {
         --exclude=".gitignore" \
         --exclude=".DS_Store" \
         --exclude="*.swp" \
+        --exclude=".gitmodules" \
+        --include="*/public/member/**" \
         . "$SERVER:$REMOTE_TEMP_DIR/" || error "Rsync failed"
     
     log "Files synced to temporary directory on server"
@@ -205,6 +258,10 @@ deploy_files() {
     
     # Move files from temp directory to actual directory
     ssh "$SERVER" "sudo rsync -a --delete $REMOTE_TEMP_DIR/ $REMOTE_DIR/ && sudo chown -R nikolaos:nikolaos $REMOTE_DIR && rm -rf $REMOTE_TEMP_DIR"
+    
+    # Report the deployed submodule status
+    log "Verifying deployed submodule content"
+    ssh "$SERVER" "cd $REMOTE_DIR && find . -type d -name '.git' -path '*/public/member/*' | while read gitdir; do echo \"Submodule: \${gitdir%/.git}\"; done"
     
     log "Deployment to server completed successfully"
 }
@@ -256,6 +313,21 @@ restart_roadrunner_service() {
     log "RoadRunner service restarted successfully"
 }
 
+# Prepare submodules for deployment
+prepare_submodules_for_deployment() {
+    log "Preparing git submodules for deployment"
+    
+    # Initialize and update submodules
+    init_update_submodules
+    
+    # Verify submodule status
+    check_submodules
+    
+    # Create a list of submodule paths and their current commits for logging
+    local submodule_info=$(git submodule status)
+    log "Deploying with the following submodule versions: \n$submodule_info"
+}
+
 # =========================================================
 # Main Deployment Process
 # =========================================================
@@ -270,6 +342,9 @@ main() {
     
     # Ensure git is clean
     check_git_clean
+    
+    # Prepare submodules for deployment
+    prepare_submodules_for_deployment
     
     # Bump version
     bump_version "$bump_type"
