@@ -22,10 +22,10 @@ set -euo pipefail
 REMOTE_USER="nikolaos"
 REMOTE_HOST="alonissos.willhaben.vip"
 REMOTE_DIR="/opt/willhaben.vip"
-COMPOSE_FILE="docker-compose.prod.yml"
+COMPOSE_FILE="sudo docker-compose.prod.yml"
 LOG_FILE="deploy-$(date +%Y%m%d-%H%M%S).log"
 
-# Docker container names from docker-compose.prod.yml
+# Docker container names from sudo docker-compose.prod.yml
 APP_CONTAINER="willhaben_app"
 NGINX_CONTAINER="willhaben_nginx"
 REDIS_CONTAINER="willhaben_storage"
@@ -86,7 +86,7 @@ check_container_health() {
   info "Checking health of ${container}..."
   
   while [[ $attempt -le $max_attempts ]]; do
-    local status=$(ssh_exec "docker inspect --format='{{.State.Health.Status}}' ${container} 2>/dev/null || echo 'not_found'" true)
+    local status=$(ssh_exec "sudo docker inspect --format='{{.State.Health.Status}}' ${container} 2>/dev/null || echo 'not_found'" true)
     
     if [[ "${status}" == "healthy" ]]; then
       success "Container ${container} is healthy"
@@ -110,7 +110,7 @@ prepare_server() {
   info "Preparing remote server..."
   
   # Ensure Docker is running
-  if ! ssh_exec "docker ps > /dev/null 2>&1"; then
+  if ! ssh_exec "sudo docker ps > /dev/null 2>&1"; then
     error "Docker is not running on the remote server"
     return 1
   fi
@@ -130,12 +130,12 @@ prepare_server() {
   ssh_exec "chmod -R 755 ${REMOTE_DIR}/nginx"
   
   # Setup Docker networks if they don't exist
-  if ! ssh_exec "docker network ls | grep -q 'app_network'"; then
-    ssh_exec "docker network create app_network --internal"
+  if ! ssh_exec "sudo docker network ls | grep -q 'app_network'"; then
+    ssh_exec "sudo docker network create app_network --internal"
   fi
   
-  if ! ssh_exec "docker network ls | grep -q 'web_network'"; then
-    ssh_exec "docker network create web_network"
+  if ! ssh_exec "sudo docker network ls | grep -q 'web_network'"; then
+    ssh_exec "sudo docker network create web_network"
   fi
   
   success "Server preparation complete"
@@ -149,7 +149,7 @@ create_backup() {
   # Create backup directory
   ssh_exec "mkdir -p ${backup_dir}"
   
-  # Backup docker-compose file
+  # Backup sudo docker-compose file
   ssh_exec "test -f ${REMOTE_DIR}/${COMPOSE_FILE} && cp ${REMOTE_DIR}/${COMPOSE_FILE} ${backup_dir}/" || true
   
   # Backup volume data
@@ -158,15 +158,15 @@ create_backup() {
   ssh_exec "test -d ${REMOTE_DIR}/nginx && tar -czf ${backup_dir}/nginx-data.tar.gz -C ${REMOTE_DIR} nginx" || true
   
   # Backup Redis data if Redis container is running
-  if ssh_exec "docker ps | grep -q ${REDIS_CONTAINER}" true; then
+  if ssh_exec "sudo docker ps | grep -q ${REDIS_CONTAINER}" true; then
     info "Backing up Redis data..."
-    ssh_exec "docker exec ${REDIS_CONTAINER} redis-cli SAVE" || true
+    ssh_exec "sudo docker exec ${REDIS_CONTAINER} redis-cli SAVE" || true
     ssh_exec "test -d ${REMOTE_DIR}/data/redis && tar -czf ${backup_dir}/redis-data.tar.gz -C ${REMOTE_DIR}/data redis" || true
   fi
   
   # Create backup info file
   ssh_exec "echo 'Backup created on $(date)' > ${backup_dir}/backup-info.txt"
-  ssh_exec "docker ps > ${backup_dir}/containers.txt" || true
+  ssh_exec "sudo docker ps > ${backup_dir}/containers.txt" || true
   
   success "Backup created at ${backup_dir}"
 }
@@ -186,9 +186,9 @@ restore_backup() {
   info "Restoring from backup: ${backup_dir}"
   
   # Stop running containers
-  ssh_exec "cd ${REMOTE_DIR} && docker-compose -f ${COMPOSE_FILE} down || docker compose -f ${COMPOSE_FILE} down" || true
+  ssh_exec "cd ${REMOTE_DIR} && sudo docker-compose -f ${COMPOSE_FILE} down || sudo docker compose -f ${COMPOSE_FILE} down" || true
   
-  # Restore docker-compose file
+  # Restore sudo docker-compose file
   ssh_exec "test -f ${backup_dir}/${COMPOSE_FILE} && cp ${backup_dir}/${COMPOSE_FILE} ${REMOTE_DIR}/" || true
   
   # Restore data
@@ -213,7 +213,7 @@ restore_backup() {
   fi
   
   # Start containers
-  ssh_exec "cd ${REMOTE_DIR} && docker-compose -f ${COMPOSE_FILE} up -d || docker compose -f ${COMPOSE_FILE} up -d"
+  ssh_exec "cd ${REMOTE_DIR} && sudo docker-compose -f ${COMPOSE_FILE} up -d || sudo docker compose -f ${COMPOSE_FILE} up -d"
   
   success "Restore completed from ${backup_dir}"
 }
@@ -228,23 +228,23 @@ deploy() {
   # Create backup before changes
   create_backup
   
-  # Upload docker-compose file
+  # Upload sudo docker-compose file
   if ! upload_file "${COMPOSE_FILE}" "${REMOTE_DIR}/${COMPOSE_FILE}"; then
-    error "Failed to upload docker-compose.yml"
+    error "Failed to upload sudo docker-compose.yml"
     return 1
   fi
   
   # Pull latest images
   info "Pulling latest Docker images..."
-  ssh_exec "cd ${REMOTE_DIR} && docker-compose -f ${COMPOSE_FILE} pull || docker compose -f ${COMPOSE_FILE} pull"
+  ssh_exec "cd ${REMOTE_DIR} && sudo docker-compose -f ${COMPOSE_FILE} pull || sudo docker compose -f ${COMPOSE_FILE} pull"
   
   # Stop and remove existing containers
   info "Stopping existing containers..."
-  ssh_exec "cd ${REMOTE_DIR} && docker-compose -f ${COMPOSE_FILE} down || docker compose -f ${COMPOSE_FILE} down" || true
+  ssh_exec "cd ${REMOTE_DIR} && sudo docker-compose -f ${COMPOSE_FILE} down || sudo docker compose -f ${COMPOSE_FILE} down" || true
   
   # Start containers
   info "Starting containers..."
-  ssh_exec "cd ${REMOTE_DIR} && docker-compose -f ${COMPOSE_FILE} up -d || docker compose -f ${COMPOSE_FILE} up -d"
+  ssh_exec "cd ${REMOTE_DIR} && sudo docker-compose -f ${COMPOSE_FILE} up -d || sudo docker compose -f ${COMPOSE_FILE} up -d"
   
   # Wait for containers to be healthy
   sleep 5
@@ -258,7 +258,7 @@ deploy() {
   
   # Check deployment status
   info "Checking deployment status..."
-  ssh_exec "cd ${REMOTE_DIR} && docker-compose -f ${COMPOSE_FILE} ps || docker compose -f ${COMPOSE_FILE} ps"
+  ssh_exec "cd ${REMOTE_DIR} && sudo docker-compose -f ${COMPOSE_FILE} ps || sudo docker compose -f ${COMPOSE_FILE} ps"
   
   success "Deployment completed successfully"
 }
@@ -267,13 +267,13 @@ deploy() {
 check_status() {
   info "Checking status of containers..."
   
-  ssh_exec "docker ps --filter 'name=willhaben_'"
-  ssh_exec "docker stats --no-stream --filter 'name=willhaben_'"
+  ssh_exec "sudo docker ps --filter 'name=willhaben_'"
+  ssh_exec "sudo docker stats --no-stream --filter 'name=willhaben_'"
   
   # Check health status
-  local app_health=$(ssh_exec "docker inspect --format='{{.State.Health.Status}}' ${APP_CONTAINER} 2>/dev/null || echo 'not_found'" true)
-  local nginx_health=$(ssh_exec "docker inspect --format='{{.State.Health.Status}}' ${NGINX_CONTAINER} 2>/dev/null || echo 'not_found'" true)
-  local redis_health=$(ssh_exec "docker inspect --format='{{.State.Health.Status}}' ${REDIS_CONTAINER} 2>/dev/null || echo 'not_found'" true)
+  local app_health=$(ssh_exec "sudo docker inspect --format='{{.State.Health.Status}}' ${APP_CONTAINER} 2>/dev/null || echo 'not_found'" true)
+  local nginx_health=$(ssh_exec "sudo docker inspect --format='{{.State.Health.Status}}' ${NGINX_CONTAINER} 2>/dev/null || echo 'not_found'" true)
+  local redis_health=$(ssh_exec "sudo docker inspect --format='{{.State.Health.Status}}' ${REDIS_CONTAINER} 2>/dev/null || echo 'not_found'" true)
   
   info "Health status:"
   info "- Application: ${app_health}"
