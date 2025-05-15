@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # =========================================================
 # Willhaben.vip Deployment Script
@@ -27,6 +27,9 @@
 # Exit on error
 set -e
 
+# Detect shell environment
+SHELL_NAME=$(basename "$SHELL")
+
 # Configuration
 SERVER="nikolaos@alonnisos.willhaben.vip"
 REMOTE_DIR="/var/www/willhaben.vip"
@@ -38,6 +41,9 @@ LOG_FILE="deployment_$(date +%Y%m%d%H%M%S).log"
 
 # Initialize log
 echo "=== Deployment started at $(date) ===" > "$LOG_FILE"
+
+# Log shell information
+log "Detected shell: $SHELL_NAME"
 
 # =========================================================
 # Helper Functions
@@ -111,27 +117,30 @@ parse_ignore_files() {
 # Returns the path to the created temporary file
 create_exclude_file() {
     local temp_file
-    local excludes
     
     # Create temporary file
     temp_file=$(mktemp /tmp/rsync-excludes.XXXXXX)
-    
-    # Get exclusion patterns from ignore files
-    readarray -t excludes < <(parse_ignore_files | tr ' ' '\n' | grep -v '^--exclude=' | grep -v '^--include=')
     
     # Add critical exclusions
     echo "- deploy.sh" >> "$temp_file"
     echo "- $LOG_FILE" >> "$temp_file"
     
-    # Add patterns from ignore files
-    for pattern in "${excludes[@]}"; do
-        if [[ -n "$pattern" ]]; then
-            # If pattern is an include (negation in gitignore)
-            if [[ "$pattern" == --include=* ]]; then
-                echo "+ ${pattern#--include=}" >> "$temp_file"
-            else
-                echo "- ${pattern#--exclude=}" >> "$temp_file"
-            fi
+    # Get exclusion patterns from ignore files and process them directly
+    parse_ignore_files | tr ' ' '\n' | while read -r option pattern; do
+        # Skip empty lines
+        if [[ -z "$option" ]]; then
+            continue
+        fi
+        
+        # Extract the pattern part
+        if [[ "$option" == "--exclude=" ]]; then
+            echo "- ${option#--exclude=}${pattern}" >> "$temp_file"
+        elif [[ "$option" == "--include=" ]]; then
+            echo "+ ${option#--include=}${pattern}" >> "$temp_file"
+        elif [[ "$option" == "--exclude"* ]]; then
+            echo "- ${option#--exclude=}" >> "$temp_file"
+        elif [[ "$option" == "--include"* ]]; then
+            echo "+ ${option#--include=}" >> "$temp_file"
         fi
     done
     
@@ -363,12 +372,22 @@ deploy_files() {
     done
     
     # Sync files to temporary directory first, preserving submodules
-    rsync -avz --delete --chmod=Du=rwx,Dg=rx,Do=rx,Fu=rw,Fg=r,Fo=r \
-        --filter="merge $exclude_file" \
-        . "$SERVER:$REMOTE_TEMP_DIR/" || error "Rsync failed"
+    log "Starting rsync to temporary directory..."
     
-    # Clean up temporary file
+    # Set a higher timeout for rsync to prevent timeouts on slow connections
+    rsync_result=0
+    rsync -avz --delete --chmod=Du=rwx,Dg=rx,Do=rx,Fu=rw,Fg=r,Fo=r \
+        --timeout=300 \
+        --filter="merge $exclude_file" \
+        . "$SERVER:$REMOTE_TEMP_DIR/" || rsync_result=$?
+    
+    # Clean up temporary file regardless of rsync result
     rm -f "$exclude_file"
+    
+    # Check rsync result
+    if [ $rsync_result -ne 0 ]; then
+        error "Rsync failed with exit code $rsync_result. Please check your connection and try again."
+    fi
     
     log "Files synced to temporary directory on server"
     
