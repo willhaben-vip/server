@@ -27,7 +27,7 @@ SERVER="nikolaos@alonnisos.willhaben.vip"
 REMOTE_DIR="/var/www/willhaben.vip"
 VERSION_FILE="VERSION"
 ROADRUNNER_SERVICE="roadrunner"
-REMOTE_TEMP_DIR="/tmp/willhaben_deploy"
+REMOTE_TEMP_DIR="/home/nikolaos/willhaben_deploy_tmp"
 REMOTE_BACKUP_DIR="${REMOTE_DIR}_backup_$(date +%Y%m%d%H%M%S)"
 LOG_FILE="deployment_$(date +%Y%m%d%H%M%S).log"
 
@@ -222,6 +222,24 @@ check_ssh_connection() {
     log "SSH connection to $SERVER is working"
 }
 
+# Create temporary directory with proper permissions
+create_temp_directory() {
+    log "Creating temporary directory on remote server"
+    
+    # Remove existing temp directory if it exists
+    ssh "$SERVER" "rm -rf $REMOTE_TEMP_DIR" || log "Warning: Could not remove existing temporary directory"
+    
+    # Create new temp directory with proper permissions
+    ssh "$SERVER" "mkdir -p $REMOTE_TEMP_DIR && chmod 755 $REMOTE_TEMP_DIR" || error "Failed to create temporary directory with proper permissions"
+    
+    # Verify directory was created and has proper permissions
+    if ! ssh "$SERVER" "[ -d $REMOTE_TEMP_DIR ] && [ -w $REMOTE_TEMP_DIR ]"; then
+        error "Temporary directory does not exist or is not writable"
+    fi
+    
+    log "Temporary directory created successfully"
+}
+
 # Deploy files to server using rsync
 deploy_files() {
     local version=$(get_current_version)
@@ -229,10 +247,10 @@ deploy_files() {
     log "Deploying version $version to $SERVER:$REMOTE_DIR"
     
     # Create temporary directory on remote server
-    ssh "$SERVER" "mkdir -p $REMOTE_TEMP_DIR"
+    create_temp_directory
     
     # Sync files to temporary directory first, preserving submodules
-    rsync -avz --delete \
+    rsync -avz --delete --chmod=Du=rwx,Dg=rx,Do=rx,Fu=rw,Fg=r,Fo=r \
         --exclude=".git/" \
         --exclude="vendor/" \
         --exclude="tests/" \
@@ -250,6 +268,11 @@ deploy_files() {
     
     log "Files synced to temporary directory on server"
     
+    # Verify files were successfully transferred to temp directory
+    if ! ssh "$SERVER" "[ -d $REMOTE_TEMP_DIR ] && [ -f $REMOTE_TEMP_DIR/VERSION ]"; then
+        error "Files were not successfully transferred to the temporary directory"
+    fi
+    
     # Backup existing installation if it exists
     ssh "$SERVER" "if [ -d $REMOTE_DIR ]; then sudo cp -a $REMOTE_DIR $REMOTE_BACKUP_DIR && sudo chown -R nikolaos:nikolaos $REMOTE_BACKUP_DIR; fi"
     
@@ -257,7 +280,7 @@ deploy_files() {
     ssh "$SERVER" "sudo mkdir -p $REMOTE_DIR && sudo chown nikolaos:nikolaos $REMOTE_DIR"
     
     # Move files from temp directory to actual directory
-    ssh "$SERVER" "sudo rsync -a --delete $REMOTE_TEMP_DIR/ $REMOTE_DIR/ && sudo chown -R nikolaos:nikolaos $REMOTE_DIR && rm -rf $REMOTE_TEMP_DIR"
+    ssh "$SERVER" "sudo rsync -a --delete --no-perms $REMOTE_TEMP_DIR/ $REMOTE_DIR/ && sudo chown -R nikolaos:nikolaos $REMOTE_DIR && rm -rf $REMOTE_TEMP_DIR"
     
     # Report the deployed submodule status
     log "Verifying deployed submodule content"
