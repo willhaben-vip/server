@@ -2,8 +2,8 @@ version: "3.0"
 
 http:
   address: "0.0.0.0:8069"
-  middleware: ["headers", "gzip"]  # Use PHP for file serving instead of middleware
-  max_request_size: 268435456  # 256 * 1024 * 1024 bytes = 256MB
+  middleware: ["headers", "gzip"]  # Only essential middleware
+  max_request_size: 67108864  # 64MB (reduced from 256MB)
   headers:
     cors:
       allowedOrigins: ["*"]
@@ -12,49 +12,48 @@ http:
       exposedHeaders: ["Content-Length"]
       allowCredentials: true
       maxAge: 600
-    # Response headers for all requests
     response:
       X-Powered-By: "RoadRunner"
       X-Content-Type-Options: "nosniff"
       X-Frame-Options: "DENY"
-      # No-cache for development to see changes immediately
-      Cache-Control: "no-cache, no-store, must-revalidate"
   pool:
     num_workers: 1
-    max_jobs: 0    # Unlimited jobs per worker
-    allocate_timeout: 60s
+    max_jobs: 64    # Limit jobs per worker for better stability
+    allocate_timeout: 30s
+    destroy_timeout: 10s
     debug: false
     supervisor:
       exec_ttl: 60s
+      watch_ticks: 3
+      max_worker_memory: 128  # MB
+      ttl: 60s
     
 server:
-  command: "php -d display_errors=1 -d error_reporting=E_ALL .rr-worker.php"
+  command: "php -d display_errors=0 -d error_reporting=E_ERROR .rr-worker.php"
   env_map:
     APP_ENV: "production"
-    DISPLAY_ERRORS: "1"
-    ERROR_REPORTING: "32767"
-    DEBUG: "1"
-    # Add environment variable to enable detailed logging in PHP worker
-    RR_DEBUG: "2"
-    LOG_LEVEL: "debug"
+    DISPLAY_ERRORS: "0"
+    ERROR_REPORTING: "1"  # Only fatal errors
+    DEBUG: "0"
+    RR_DEBUG: "0"
+    LOG_LEVEL: "error"
   relay: "pipes"
   
 logs:
-  mode: development
-  level: debug
+  mode: production  # Changed from development
+  level: error      # Changed from debug
   encoding: json
   output: "stdout"
   err_output: "stderr"
   
 reload:
-  enabled: false
+  enabled: true     # Enable for recovery
+  interval: 1s
   patterns: [".php"]
   services:
     http:
       recursive: true
       dirs: ["public"]
-
-# File service configuration for direct file handling      
 
 health:
   address: "0.0.0.0:2115"
@@ -66,19 +65,23 @@ status:
 metrics:
   address: "0.0.0.0:2112"
 
-# Debug options for detailed troubleshooting
+# Minimal debug options
 debug:
-  log_allocated: true        # Log worker allocation details
-  max_request_size: 64
-  output: "stdout"          # Direct output to stdout for better visibility
-  log_level: 5              # Maximum verbosity (values 0-5)
-  request_debug: true       # Show detailed request information
-  middleware_debug: true    # Show middleware processing information
-  http_debug: true          # Log HTTP-specific debug information
-  static_debug: true        # Enable specific debug for static file serving
+  log_allocated: false
+  max_request_size: 16
+  output: "stdout"
+  log_level: 1         # Minimal verbosity (values 0-5)
+  request_debug: false
+  middleware_debug: false
+  http_debug: false
+  static_debug: false
 
-# Enable HTTP plugin reload on errors
+# Better error handling limits
 limit:
   http:
-    max_error_attempts: 5    # Maximum number of errors before resetting the worker
-    interval: 1m            # Time period for error counting
+    max_memory: 128    # MB
+    max_error_attempts: 3
+    timeout: 30s       # Request timeout
+    interval: 60s
+    max_idle_time: 30s
+

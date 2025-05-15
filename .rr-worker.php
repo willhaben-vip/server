@@ -31,39 +31,100 @@ function serveStaticFile(string $path, Psr7\Factory\Psr17Factory $psrFactory, Lo
         $path = '/signup/index.htm';
     }
     
-    // Normalize path: remove leading slash if present
-    if (str_starts_with($path, '/')) {
-        $path = substr($path, 1);
-    }
+    // Log the input path for debugging
+    $logger->debug("Initial path in serveStaticFile", [
+        'input_path' => $path,
+        'base_path' => $basePath
+    ]);
+    
+    // Keep the leading slash for consistency in logging, but handle it properly when joining paths
+    $pathForJoining = ltrim($path, '/');
     
     // Properly join paths to avoid double slashes
-    $fullPath = $basePath . '/' . $path;
+    $fullPath = $basePath . '/' . $pathForJoining;
     
-    // Normalize path to remove any potential double slashes
-    $fullPath = str_replace('//', '/', $fullPath);
+    // Get file permissions and environment information
+    $filePerms = file_exists($fullPath) ? fileperms($fullPath) : null;
+    $octalPerms = $filePerms !== null ? substr(sprintf('%o', $filePerms), -4) : 'n/a';
+    $fileOwner = file_exists($fullPath) ? posix_getpwuid(fileowner($fullPath)) : null;
+    $fileGroup = file_exists($fullPath) ? posix_getgrgid(filegroup($fullPath)) : null;
+    $currentUmask = sprintf('%04o', umask());
+    $currentUser = posix_getpwuid(posix_geteuid());
+    $currentGroup = posix_getgrgid(posix_getegid());
     
-    $logger->debug("Static file request", [
+    // Check parent directory
+    $parentDir = dirname($fullPath);
+    $parentDirExists = is_dir($parentDir);
+    $parentDirPerms = $parentDirExists ? substr(sprintf('%o', fileperms($parentDir)), -4) : 'n/a';
+    $parentDirOwner = $parentDirExists ? posix_getpwuid(fileowner($parentDir)) : null;
+    
+    // Check for any problematic path characteristics
+    $hasDoubleSlashes = strpos($fullPath, '//') !== false;
+    $hasBackslashes = strpos($fullPath, '\\') !== false;
+    $isSymlink = file_exists($fullPath) && is_link($fullPath);
+    
+    $logger->debug("Static file request - detailed", [
         'original_path' => $path,
-        'normalized_path' => $path,
+        'path_for_joining' => $pathForJoining,
         'base_path' => $basePath,
         'full_path' => $fullPath,
         'file_exists' => file_exists($fullPath) ? 'true' : 'false',
         'is_readable' => is_readable($fullPath) ? 'true' : 'false',
+        'is_writable' => is_writable($fullPath) ? 'true' : 'false',
         'current_dir' => getcwd(),
-        'script_dir' => __DIR__
+        'script_dir' => __DIR__,
+        'absolute_path' => realpath($fullPath) ?: 'not resolvable',
+        'file_perms_octal' => $octalPerms,
+        'file_owner' => $fileOwner ? ($fileOwner['name'] . ' (uid: ' . $fileOwner['uid'] . ')') : 'n/a',
+        'file_group' => $fileGroup ? ($fileGroup['name'] . ' (gid: ' . $fileGroup['gid'] . ')') : 'n/a',
+        'is_symlink' => $isSymlink ? 'true' : 'false',
+        'current_umask' => $currentUmask,
+        'current_user' => $currentUser['name'] . ' (uid: ' . $currentUser['uid'] . ')',
+        'current_group' => $currentGroup['name'] . ' (gid: ' . $currentGroup['gid'] . ')',
+        'parent_dir' => $parentDir,
+        'parent_dir_exists' => $parentDirExists ? 'true' : 'false',
+        'parent_dir_perms' => $parentDirPerms,
+        'parent_dir_owner' => $parentDirExists ? ($parentDirOwner['name'] . ' (uid: ' . $parentDirOwner['uid'] . ')') : 'n/a',
+        'path_contains_double_slashes' => $hasDoubleSlashes ? 'true' : 'false',
+        'path_contains_backslashes' => $hasBackslashes ? 'true' : 'false'
     ]);
     
     // Try resolving the real path for debugging
     $attemptedRealPath = realpath($fullPath);
     
-    $logger->debug("Static file full path resolution", [
+    // Check if the path can be resolved relative to the current directory
+    $relativeToCurrentDir = realpath(getcwd() . '/' . ltrim($path, '/'));
+    
+    // Try different path resolution approaches
+    $altPath1 = __DIR__ . '/public/member/' . ltrim($path, '/');
+    $altPath2 = getcwd() . '/public/member/' . ltrim($path, '/');
+    $altPath3 = dirname(__DIR__) . '/public/member/' . ltrim($path, '/');
+    
+    $logger->debug("Static file path resolution - detailed", [
         'input_path' => $path,
+        'normalized_path' => ltrim($path, '/'),
         'full_path' => $fullPath,
         'real_path_attempt' => $attemptedRealPath ?: 'false',
+        'canonical_path' => $attemptedRealPath ?: 'not resolvable',
+        'path_from_cwd' => getcwd() . '/' . ltrim($path, '/'),
+        'real_path_from_cwd' => $relativeToCurrentDir ?: 'not resolvable',
+        'alt_path1' => $altPath1,
+        'alt_path1_exists' => file_exists($altPath1) ? 'true' : 'false',
+        'alt_path1_real' => realpath($altPath1) ?: 'not resolvable',
+        'alt_path2' => $altPath2,
+        'alt_path2_exists' => file_exists($altPath2) ? 'true' : 'false',
+        'alt_path2_real' => realpath($altPath2) ?: 'not resolvable',
+        'alt_path3' => $altPath3,
+        'alt_path3_exists' => file_exists($altPath3) ? 'true' : 'false',
+        'alt_path3_real' => realpath($altPath3) ?: 'not resolvable',
         'exists' => file_exists($fullPath) ? 'true' : 'false',
         'is_file' => is_file($fullPath) ? 'true' : 'false',
         'is_readable' => is_readable($fullPath) ? 'true' : 'false',
-        'is_dir' => is_dir($fullPath) ? 'true' : 'false'
+        'is_writable' => is_writable($fullPath) ? 'true' : 'false',
+        'is_dir' => is_dir($fullPath) ? 'true' : 'false',
+        'dirname' => dirname($fullPath),
+        'basename' => basename($fullPath),
+        'path_parts' => pathinfo($fullPath)
     ]);
     
     // Validate path to prevent directory traversal
@@ -71,10 +132,23 @@ function serveStaticFile(string $path, Psr7\Factory\Psr17Factory $psrFactory, Lo
     $publicMemberPath = realpath($basePath);
     
     if ($realPath === false || !str_starts_with($realPath, $publicMemberPath)) {
-        $logger->debug("Directory traversal attempt or invalid path", [
+        $logger->debug("Directory traversal attempt or invalid path - detailed", [
             'path' => $path,
             'real_path' => $realPath ?: 'false',
-            'public_member_path' => $publicMemberPath
+            'public_member_path' => $publicMemberPath,
+            'full_path' => $fullPath,
+            'path_is_absolute' => str_starts_with($path, '/') ? 'true' : 'false',
+            'base_path_real' => $publicMemberPath,
+            'base_path_raw' => $basePath,
+            'path_contains_dots' => (strpos($path, '..') !== false) ? 'true' : 'false',
+            'can_open_directory' => is_dir(dirname($fullPath)) && is_readable(dirname($fullPath)) ? 'true' : 'false',
+            'directory_contents' => is_dir(dirname($fullPath)) ? implode(', ', scandir(dirname($fullPath))) : 'not available',
+            'attempted_paths' => [
+                'direct' => $fullPath,
+                'with_base_dir' => $basePath . '/' . ltrim($path, '/'),
+                'with_script_dir' => __DIR__ . '/public/member/' . ltrim($path, '/'),
+                'with_cwd' => getcwd() . '/public/member/' . ltrim($path, '/')
+            ]
         ]);
         
         // Default to signup page instead of redirecting
@@ -103,15 +177,11 @@ function serveStaticFile(string $path, Psr7\Factory\Psr17Factory $psrFactory, Lo
                 $logger->debug("Directory index not found", ['dir' => $fullPath]);
                 // Default to signup/index.htm instead of redirecting
                 $fullPath = $basePath . '/signup/index.htm';
-                // Normalize path again to avoid any potential double slashes
-                $fullPath = str_replace('//', '/', $fullPath);
             }
         } else {
             $logger->debug("File not found", ['path' => $fullPath]);
             // Default to signup/index.htm instead of redirecting
             $fullPath = $basePath . '/signup/index.htm';
-            // Normalize path again to avoid any potential double slashes
-            $fullPath = str_replace('//', '/', $fullPath);
         }
         
         $logger->debug("Defaulting to fallback file", [
@@ -147,11 +217,46 @@ function serveStaticFile(string $path, Psr7\Factory\Psr17Factory $psrFactory, Lo
     
     try {
         $size = filesize($fullPath);
-        $logger->debug("Reading file", [
+        $stat = stat($fullPath);
+        $filePerms = fileperms($fullPath);
+        $octalPerms = substr(sprintf('%o', $filePerms), -4);
+        $symbolicPerms = '';
+        
+        // Build symbolic permissions string (similar to ls -l)
+        $symbolicPerms .= (($filePerms & 0x0100) ? 'r' : '-');
+        $symbolicPerms .= (($filePerms & 0x0080) ? 'w' : '-');
+        $symbolicPerms .= (($filePerms & 0x0040) ? 'x' : '-');
+        $symbolicPerms .= (($filePerms & 0x0020) ? 'r' : '-');
+        $symbolicPerms .= (($filePerms & 0x0010) ? 'w' : '-');
+        $symbolicPerms .= (($filePerms & 0x0008) ? 'x' : '-');
+        $symbolicPerms .= (($filePerms & 0x0004) ? 'r' : '-');
+        $symbolicPerms .= (($filePerms & 0x0002) ? 'w' : '-');
+        $symbolicPerms .= (($filePerms & 0x0001) ? 'x' : '-');
+        
+        $logger->debug("Reading file - detailed", [
             'path' => $fullPath, 
             'real_path' => realpath($fullPath) ?: 'false',
+            'canonical_path' => realpath($fullPath) ?: 'not resolvable',
             'size' => $size, 
-            'type' => $contentType
+            'type' => $contentType,
+            'permissions_octal' => $octalPerms,
+            'permissions_symbolic' => $symbolicPerms,
+            'file_inode' => $stat['ino'],
+            'file_atime' => date('Y-m-d H:i:s', $stat['atime']),
+            'file_mtime' => date('Y-m-d H:i:s', $stat['mtime']),
+            'file_ctime' => date('Y-m-d H:i:s', $stat['ctime']),
+            'file_uid' => $stat['uid'],
+            'file_gid' => $stat['gid'],
+            'file_owner' => posix_getpwuid($stat['uid'])['name'] ?? 'unknown',
+            'file_group' => posix_getgrgid($stat['gid'])['name'] ?? 'unknown',
+            'is_symlink' => is_link($fullPath) ? 'true' : 'false',
+            'symlink_target' => is_link($fullPath) ? readlink($fullPath) : 'n/a',
+            'server_variables' => [
+                'PWD' => getenv('PWD'),
+                'USER' => getenv('USER'),
+                'HOME' => getenv('HOME'),
+                'PATH' => getenv('PATH')
+            ]
         ]);
         
         if ($size > 1024 * 1024) { // If file is larger than 1MB
@@ -268,16 +373,18 @@ try {
 
             try {
                 // Static file handling for member paths and root path
-                // Check if path is the root path ('/' or empty)
+                // Check if path is the root path ('/' or empty) or signup-related
                 if ($path === '/' || $path === '' || $path === '/signup' || $path === '/signup/') {
+                    // Always use the explicit signup index path for consistency
+                    $filePath = '/signup/index.htm';
+                    
                     $logger->debug("Root or signup path detected, serving signup page", [
-                        'path' => $path,
-                        'serving_file' => '/signup/index.htm',
-                        'full_path' => '/app/public/member/signup/index.htm'
+                        'request_path' => $path,
+                        'serving_file' => $filePath,
+                        'full_path' => __DIR__ . '/public/member/signup/index.htm',
+                        'file_exists' => file_exists(__DIR__ . '/public/member/signup/index.htm') ? 'true' : 'false'
                     ]);
                     
-                    // Directly serve the file based on the path
-                    $filePath = ($path === '/' || $path === '') ? '/signup/index.htm' : $path;
                     $response = serveStaticFile($filePath, $psrFactory, $logger);
                     $psr7->respond($response);
                     continue;
@@ -293,16 +400,28 @@ try {
                     'preg_last_error_msg' => preg_last_error_msg()
                 ]);
                 if (preg_match($pattern, $path, $matches)) {
+                    // Check if path is a directory name without trailing slash
+                    $isDirectoryRequest = empty($matches[2]) || $matches[2] === '/';
+                    
                     $logger->debug("Static path match found", [
                         'original_path' => $path,
                         'matched_prefix' => $matches[1],
                         'matched_suffix' => $matches[2] ?? '',
-                        'normalized_path' => rtrim($path, '/'),
+                        'is_directory_request' => $isDirectoryRequest ? 'true' : 'false',
                         'raw_matches' => $matches
                     ]);
                     
-                    // Normalize path to handle both with and without trailing slash
-                    $normalizedPath = rtrim($path, '/');
+                    // If it looks like a directory request, append index.htm
+                    if ($isDirectoryRequest) {
+                        $normalizedPath = '/' . $matches[1] . '/index.htm';
+                        $logger->debug("Directory request detected, appending index.htm", [
+                            'original_path' => $path,
+                            'normalized_path' => $normalizedPath
+                        ]);
+                    } else {
+                        // Keep the path as is, don't strip the trailing slash
+                        $normalizedPath = $path;
+                    }
                     
                     $response = serveStaticFile($normalizedPath, $psrFactory, $logger);
                     $logger->debug("Static file response complete", [

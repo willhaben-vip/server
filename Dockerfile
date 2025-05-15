@@ -1,7 +1,8 @@
-# Use PHP 8.4 CLI image as base
-FROM php:8.4-cli
+# Use PHP 8.3 CLI image as base
+FROM php:8.3-cli
 
 # Install system dependencies
+ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     curl \
     zip \

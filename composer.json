@@ -3,7 +3,7 @@
     "description": "Willhaben Redirect Service",
     "type": "project",
     "require": {
-        "php": "^8.4",
+        "php": "^8.3",
         "spiral/roadrunner-worker": "^3.0",
         "spiral/roadrunner-http": "^3.0",
         "nyholm/psr7": "^1.8"
@@ -12,6 +12,8 @@
         "psr-4": {
             "Willhaben\\RedirectService\\": "src/"
         }
+    },
+    "require-dev": {
+        "spiral/roadrunner-cli": "^2.7"
     }
 }
-

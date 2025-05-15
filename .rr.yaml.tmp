@@ -1,0 +1,87 @@
+version: "3.0"
+
+http:
+  address: "0.0.0.0:8069"
+  middleware: ["headers", "gzip"]  # Only essential middleware
+  max_request_size: 67108864  # 64MB (reduced from 256MB)
+  headers:
+    cors:
+      allowedOrigins: ["*"]
+      allowedMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+      allowedHeaders: ["Origin", "Content-Type", "Accept", "Authorization"]
+      exposedHeaders: ["Content-Length"]
+      allowCredentials: true
+      maxAge: 600
+    response:
+      X-Powered-By: "RoadRunner"
+      X-Content-Type-Options: "nosniff"
+      X-Frame-Options: "DENY"
+  pool:
+    num_workers: 1
+    max_jobs: 64    # Limit jobs per worker for better stability
+    allocate_timeout: 30s
+    destroy_timeout: 10s
+    debug: false
+    supervisor:
+      exec_ttl: 60s
+      watch_ticks: 3
+      max_worker_memory: 128  # MB
+      ttl: 60s
+    
+server:
+  command: "php -d display_errors=0 -d error_reporting=E_ERROR .rr-worker.php"
+  env_map:
+    APP_ENV: "production"
+    DISPLAY_ERRORS: "0"
+    ERROR_REPORTING: "1"  # Only fatal errors
+    DEBUG: "0"
+    RR_DEBUG: "0"
+    LOG_LEVEL: "error"
+  relay: "pipes"
+  
+logs:
+  mode: production  # Changed from development
+  level: error      # Changed from debug
+  encoding: json
+  output: "stdout"
+  err_output: "stderr"
+  
+reload:
+  enabled: true     # Enable for recovery
+  interval: 1s
+  patterns: [".php"]
+  services:
+    http:
+      recursive: true
+      dirs: ["public"]
+
+health:
+  address: "0.0.0.0:2115"
+  timeout: 5s
+
+status:
+  address: "0.0.0.0:2116"
+
+metrics:
+  address: "0.0.0.0:2112"
+
+# Minimal debug options
+debug:
+  log_allocated: false
+  max_request_size: 16
+  output: "stdout"
+  log_level: 1         # Minimal verbosity (values 0-5)
+  request_debug: false
+  middleware_debug: false
+  http_debug: false
+  static_debug: false
+
+# Better error handling limits
+limit:
+  http:
+    max_memory: 128    # MB
+    max_error_attempts: 3
+    timeout: 30s       # Request timeout
+    interval: 60s
+    max_idle_time: 30s
+
