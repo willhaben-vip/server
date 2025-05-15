@@ -5,7 +5,7 @@
 # =========================================================
 #
 # This script handles version management and deployment
-# for the Willhaben.vip server.
+# for the Willhaben.vip server on alonnisos.willhaben.vip.
 #
 # Usage:
 #   ./deploy.sh [patch|minor|major]
@@ -23,7 +23,7 @@
 set -e
 
 # Configuration
-SERVER="root@ikaria.bankpay.plus"
+SERVER="nikolaos@alonnisos.willhaben.vip"
 REMOTE_DIR="/var/www/willhaben.vip"
 VERSION_FILE="VERSION"
 ROADRUNNER_SERVICE="roadrunner"
@@ -166,7 +166,7 @@ create_and_push_tag() {
 check_ssh_connection() {
     log "Checking SSH connection to $SERVER"
     if ! ssh -o BatchMode=yes -o ConnectTimeout=5 "$SERVER" exit > /dev/null 2>&1; then
-        error "Cannot connect to server via SSH. Please check your SSH configuration and server status."
+        error "Cannot connect to server via SSH. Please check your SSH configuration and that alonnisos.willhaben.vip is accessible."
     fi
     log "SSH connection to $SERVER is working"
 }
@@ -198,13 +198,13 @@ deploy_files() {
     log "Files synced to temporary directory on server"
     
     # Backup existing installation if it exists
-    ssh "$SERVER" "if [ -d $REMOTE_DIR ]; then cp -a $REMOTE_DIR $REMOTE_BACKUP_DIR; fi"
+    ssh "$SERVER" "if [ -d $REMOTE_DIR ]; then sudo cp -a $REMOTE_DIR $REMOTE_BACKUP_DIR && sudo chown -R nikolaos:nikolaos $REMOTE_BACKUP_DIR; fi"
     
-    # Ensure target directory exists
-    ssh "$SERVER" "mkdir -p $REMOTE_DIR"
+    # Ensure target directory exists with correct permissions
+    ssh "$SERVER" "sudo mkdir -p $REMOTE_DIR && sudo chown nikolaos:nikolaos $REMOTE_DIR"
     
     # Move files from temp directory to actual directory
-    ssh "$SERVER" "rsync -a --delete $REMOTE_TEMP_DIR/ $REMOTE_DIR/ && rm -rf $REMOTE_TEMP_DIR"
+    ssh "$SERVER" "sudo rsync -a --delete $REMOTE_TEMP_DIR/ $REMOTE_DIR/ && sudo chown -R nikolaos:nikolaos $REMOTE_DIR && rm -rf $REMOTE_TEMP_DIR"
     
     log "Deployment to server completed successfully"
 }
@@ -215,7 +215,8 @@ install_dependencies() {
     
     ssh "$SERVER" "cd $REMOTE_DIR && \
         if ! command -v composer > /dev/null; then \
-            curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer; \
+            curl -sS https://getcomposer.org/installer | php && \
+            sudo mv composer.phar /usr/local/bin/composer; \
         fi && \
         composer clear-cache && \
         composer config --global process-timeout 2000 && \
@@ -246,11 +247,11 @@ restart_roadrunner_service() {
     log "Restarting RoadRunner service"
     
     ssh "$SERVER" "if systemctl is-active --quiet $ROADRUNNER_SERVICE; then \
-            systemctl restart $ROADRUNNER_SERVICE; \
+            sudo systemctl restart $ROADRUNNER_SERVICE; \
         else \
-            systemctl start $ROADRUNNER_SERVICE; \
+            sudo systemctl start $ROADRUNNER_SERVICE; \
         fi && \
-        systemctl status $ROADRUNNER_SERVICE"
+        sudo systemctl status $ROADRUNNER_SERVICE"
     
     log "RoadRunner service restarted successfully"
 }
