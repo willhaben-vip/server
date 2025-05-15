@@ -27,9 +27,6 @@
 # Exit on error
 set -e
 
-# Detect shell environment
-SHELL_NAME=$(basename "$SHELL")
-
 # Configuration
 SERVER="nikolaos@alonnisos.willhaben.vip"
 REMOTE_DIR="/var/www/willhaben.vip"
@@ -41,9 +38,6 @@ LOG_FILE="deployment_$(date +%Y%m%d%H%M%S).log"
 
 # Initialize log
 echo "=== Deployment started at $(date) ===" > "$LOG_FILE"
-
-# Log shell information
-log "Detected shell: $SHELL_NAME"
 
 # =========================================================
 # Helper Functions
