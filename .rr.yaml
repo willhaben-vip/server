@@ -85,3 +85,30 @@ limit:
     interval: 60s
     max_idle_time: 30s
 
+# Jobs and scheduler configuration
+jobs:
+  # Pool of workers for job execution
+  pool:
+    num_workers: 1
+    allocate_timeout: 60s
+    destroy_timeout: 60s
+  
+  # Define scheduled article update job
+  consume: [ "article-update" ]
+  
+  # Push pipeline
+  pipelines:
+    article-update:
+      driver: memory
+      config:
+        priority: 10
+        prefetch: 10
+  
+  # Define a schedule for article updates
+  # Use cron syntax: minute hour day month dayOfWeek
+  schedule:
+    - name: update_articles
+      command: "article-update-job"
+      schedule: "*/5 * * * *"  # Run every 5 minutes
+      pipeline: "article-update"
+

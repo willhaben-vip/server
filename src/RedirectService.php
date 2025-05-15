@@ -8,6 +8,7 @@ class RedirectService {
     private Logger $logger;
     private ?RedirectTracker $tracker = null;
     private const DEFAULT_REDIRECT_STATUS = 301; // Always use permanent redirects
+    private const WILLHABEN_SELLER_URL_PATTERN = '#https?://(?:www\.)?willhaben\.at/(?:.+)?/(?:seller-profile|user)/(\d+)#i';
 
     public function __construct(Logger $logger) {
         $this->logger = $logger;
@@ -46,6 +47,11 @@ class RedirectService {
      */
     public function handleSellerRedirect(string $sellerId): void {
         $this->logger->debug("Processing seller redirect", ['id' => $sellerId]);
+
+        // Store seller information in tracker
+        if ($this->tracker) {
+            $this->tracker->trackSeller($sellerId);
+        }
 
         $sellerSlug = $this->verifySellerAndGetSlug($sellerId);
         if ($sellerSlug) {
@@ -125,5 +131,53 @@ class RedirectService {
         // If unable to parse, return original URL
         $this->logger->debug("Unable to transform direct buy link", ['url' => $directBuyUrl]);
         return $directBuyUrl;
+    }
+
+    /**
+     * Extract seller ID from a willhaben.at URL 
+     * Examples:
+     * - https://www.willhaben.at/iad/kaufen-und-verkaufen/seller-profile/34434899
+     * - https://willhaben.at/iad/user/34434899
+     * 
+     * @param string $url The URL to extract seller ID from
+     * @return string|null The extracted seller ID or null if not found
+     */
+    public function extractSellerIdFromUrl(string $url): ?string {
+        if (preg_match(self::WILLHABEN_SELLER_URL_PATTERN, $url, $matches)) {
+            // Sanitize seller ID (numeric only)
+            $sellerId = preg_replace('/[^0-9]/', '', $matches[1]);
+            $this->logger->debug("Extracted seller ID from URL", [
+                'url' => $url,
+                'seller_id' => $sellerId
+            ]);
+            return $sellerId;
+        }
+        
+        $this->logger->debug("Could not extract seller ID from URL", ['url' => $url]);
+        return null;
+    }
+
+    /**
+     * Handle a willhaben.at seller profile redirect
+     * Process URLs like:
+     * - https://www.willhaben.at/iad/kaufen-und-verkaufen/seller-profile/34434899
+     * - https://willhaben.at/iad/user/34434899
+     */
+    public function handleWillhabenSellerRedirect(string $url): void {
+        $sellerId = $this->extractSellerIdFromUrl($url);
+        
+        if ($sellerId) {
+            $this->logger->debug("Processing willhaben.at seller redirect", [
+                'url' => $url,
+                'seller_id' => $sellerId
+            ]);
+            
+            // Handle the seller redirect
+            $this->handleSellerRedirect($sellerId);
+        } else {
+            // If we can't extract seller ID, redirect to homepage
+            $this->logger->debug("Invalid willhaben.at seller URL, redirecting to homepage", ['url' => $url]);
+            throw new RedirectException(BASE_URL, self::DEFAULT_REDIRECT_STATUS);
+        }
     }
 }
