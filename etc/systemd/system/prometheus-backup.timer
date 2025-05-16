@@ -1,0 +1,18 @@
+[Unit]
+Description=Schedule Prometheus Data Backups
+Documentation=https://prometheus.io/docs/
+Requires=prometheus-backup.service
+
+[Timer]
+# Run daily at 2:30 AM (staggered from Grafana backup)
+OnCalendar=*-*-* 02:30:00
+# Add some randomization to prevent all backup jobs from running simultaneously
+RandomizedDelaySec=20min
+# Catch up on missed runs when system was down
+Persistent=true
+# Keep backup service active for up to 3 hours (Prometheus backups can be larger)
+AccuracySec=3h
+
+[Install]
+WantedBy=timers.target
+

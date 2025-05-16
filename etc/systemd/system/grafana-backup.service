@@ -1,0 +1,28 @@
+[Unit]
+Description=Backup Grafana Dashboards
+Documentation=https://grafana.com/docs/
+After=network.target
+
+[Service]
+Type=oneshot
+User=prometheus
+Group=prometheus
+ExecStart=/opt/scripts/monitoring/backup-grafana-dashboards.sh
+SuccessExitStatus=0
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectHome=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+RestrictRealtime=true
+
+[Install]
+WantedBy=multi-user.target
+

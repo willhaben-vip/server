@@ -1,0 +1,39 @@
+[Unit]
+Description=Backup Prometheus Data
+Documentation=https://prometheus.io/docs/
+After=network.target prometheus.service
+Requires=prometheus.service
+
+[Service]
+Type=oneshot
+User=prometheus
+Group=prometheus
+ExecStart=/opt/scripts/monitoring/backup-prometheus-data.sh
+# Set a reasonable timeout for backup operations
+TimeoutStartSec=3h
+SuccessExitStatus=0
+StandardOutput=journal
+StandardError=journal
+
+# Ensure we have a proper environment for metrics generation
+Environment="PROMETHEUS_URL=http://localhost:9090"
+Environment="BACKUP_DIR=/var/backups/prometheus"
+
+# On failure, send a notification
+ExecStopPost=/bin/sh -c '[ $EXIT_STATUS != 0 ] && /usr/bin/systemd-cat -t prometheus-backup -p err echo "Prometheus backup failed with status $EXIT_STATUS"'
+
+# Security hardening
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectHome=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+RestrictRealtime=true
+ReadWritePaths=/var/backups/prometheus /var/log/monitoring
+
+[Install]
+WantedBy=multi-user.target
+

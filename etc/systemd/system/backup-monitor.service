@@ -1,0 +1,39 @@
+[Unit]
+Description=Monitor Backup System Status
+Documentation=https://prometheus.io/docs/
+After=prometheus.service
+Requires=prometheus.service
+
+[Service]
+Type=simple
+User=prometheus
+Group=prometheus
+# Run a continuous monitoring service
+ExecStart=/opt/scripts/monitoring/backup-monitor.sh
+# Restart on failure
+Restart=on-failure
+RestartSec=30s
+# 5 minutes timeout for startup
+TimeoutStartSec=5min
+
+# Environment variables for monitoring
+Environment="PROMETHEUS_URL=http://localhost:9090"
+Environment="METRICS_PATH=/var/lib/node_exporter/textfile/backup_monitoring.prom"
+Environment="CHECK_INTERVAL=5m"
+Environment="ALERT_THRESHOLD=24h" # Time since last successful backup before alerting
+
+# Security hardening
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectHome=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+RestrictRealtime=true
+ReadWritePaths=/var/lib/node_exporter/textfile /var/log/monitoring
+
+[Install]
+WantedBy=multi-user.target
+

@@ -1,0 +1,39 @@
+[Unit]
+Description=Encrypt Monitoring System Backups
+Documentation=https://prometheus.io/docs/
+After=prometheus-backup.service grafana-backup.service
+Wants=prometheus-backup.service grafana-backup.service
+
+[Service]
+Type=oneshot
+User=prometheus
+Group=prometheus
+ExecStart=/opt/scripts/monitoring/backup-encryption.sh
+# Timeout for encryption operations
+TimeoutStartSec=1h
+SuccessExitStatus=0
+StandardOutput=journal
+StandardError=journal
+
+# Environment for operation
+Environment="BACKUP_DIR=/var/backups"
+Environment="ENCRYPTION_KEY_PATH=/etc/prometheus/keys/backup.key"
+
+# On failure, notify
+ExecStopPost=/bin/sh -c '[ $EXIT_STATUS != 0 ] && /usr/bin/systemd-cat -t backup-encryption -p err echo "Backup encryption failed with status $EXIT_STATUS"'
+
+# Security hardening
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectHome=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+RestrictRealtime=true
+ReadWritePaths=/var/backups /var/log/monitoring
+
+[Install]
+WantedBy=multi-user.target
+

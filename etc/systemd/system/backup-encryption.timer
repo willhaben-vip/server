@@ -1,0 +1,18 @@
+[Unit]
+Description=Schedule Backup Encryption
+Documentation=https://prometheus.io/docs/
+Requires=backup-encryption.service
+
+[Timer]
+# Run daily at 3:30 AM (after main backups complete)
+OnCalendar=*-*-* 03:30:00
+# Add some randomization
+RandomizedDelaySec=5min
+# Catch up on missed runs when system was down
+Persistent=true
+# Reasonable accuracy window
+AccuracySec=15min
+
+[Install]
+WantedBy=timers.target
+

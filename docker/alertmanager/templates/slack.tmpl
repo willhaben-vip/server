@@ -1,0 +1,1128 @@
+{{ define "slack.title" -}}
+  [{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .CommonLabels.alertname }}
+{{- end }}
+
+{{ define "slack.text" -}}
+{{ if eq .Status "firing" -}}
+:fire: *Alerts Firing* :fire:
+{{ else -}}
+:white_check_mark: *Alerts Resolved* :white_check_mark:
+{{ end }}
+{{ range .Alerts -}}
+*Alert:* {{ .Labels.alertname }}{{ if .Labels.severity }} - `{{ .Labels.severity }}`{{ end }}
+*Description:* {{ .Annotations.description }}
+*Started:* {{ .StartsAt | since }}
+{{ if ne .Status "firing" -}}
+*Ended:* {{ .EndsAt | since }}
+{{ end -}}
+*Details:*
+{{ range .Labels.SortedPairs }}  • *{{ .Name }}:* `{{ .Value }}`
+{{ end }}
+{{ if .Annotations.summary -}}
+*Summary:* {{ .Annotations.summary }}
+{{ end -}}
+{{ if .Annotations.runbook -}}
+*Runbook:* {{ .Annotations.runbook }}
+{{ end -}}
+{{ if .Annotations.dashboard -}}
+*Dashboard:* {{ .Annotations.dashboard }}
+{{ end -}}
+{{ if .Annotations.playbook -}}
+*Playbook:* {{ .Annotations.playbook }}
+{{ end -}}
+{{ if .Annotations.impact -}}
+*Impact:* {{ .Annotations.impact }}
+{{ end -}}
+{{ if .Annotations.action -}}
+*Action:* {{ .Annotations.action }}
+{{ end -}}
+{{ if .Annotations.logs -}}
+*Logs:* {{ .Annotations.logs }}
+{{ end -}}
+{{ if .Annotations.grafana -}}
+*Grafana:* {{ .Annotations.grafana }}
+{{ end -}}
+-------------------
+{{ end }}
+{{- end }}
+
+{{ define "slack.color" -}}
+{{ if eq .Status "firing" -}}
+{{ if eq .CommonLabels.severity "critical" -}}
+danger
+{{- else if eq .CommonLabels.severity "warning" -}}
+warning
+{{- else -}}
+#36a64f
+{{- end -}}
+{{- else -}}
+good
+{{- end }}
+{{- end }}
+
+{{ define "slack.severity_emoji" -}}
+{{ if eq .CommonLabels.severity "critical" -}}
+:red_circle:
+{{- else if eq .CommonLabels.severity "warning" -}}
+:warning:
+{{- else if eq .CommonLabels.severity "info" -}}
+:information_source:
+{{- else -}}
+:question:
+{{- end }}
+{{- end }}
+
+{{ define "slack.default" -}}
+{
+  "blocks": [
+    {
+      "type": "header",
+      "text": {
+        "type": "plain_text",
+        "text": "{{ template "slack.title" . }}",
+        "emoji": true
+      }
+    },
+    {
+      "type": "divider"
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "{{ template "slack.severity_emoji" . }} *Severity:* {{ .CommonLabels.severity | default "none" }}\n*Status:* {{ .Status | toUpper }}\n*Alerts:* {{ .Alerts | len }}"
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "{{ template "slack.text" . }}"
+      }
+    },
+    {
+      "type": "context",
+      "elements": [
+        {
+          "type": "mrkdwn",
+          "text": "Sent by AlertManager at {{ now | time "2006-01-02 15:04:05" }} (UTC)"
+        }
+      ]
+    }
+  ],
+  "attachments": [
+    {
+      "color": "{{ template "slack.color" . }}",
+      "blocks": [
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "{{- if eq .Status "firing" -}}:fire: *View in alertmanager:* {{ .ExternalURL }}{{- else -}}:white_check_mark: *View resolved alerts:* {{ .ExternalURL }}{{- end -}}"
+          }
+        }
+      ]
+    }
+  ]
+}
+{{- end }}
+
+{{ define "__alertmanager" }}AlertManager{{ end }}
+{{ define "__alertmanagerURL" }}{{ .ExternalURL }}/#/alerts?receiver={{ .Receiver | urlquery }}{{ end }}
+
+{{ define "__subject" }}[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .CommonLabels.alertname }}{{ end }}
+
+{{ define "__text_alert_list" }}{{ range . }}
+*Alert:* {{ .Annotations.summary }}{{ if .Labels.severity }} - `{{ .Labels.severity }}`{{ end }}
+*Description:* {{ .Annotations.description }}
+*Details:*
+{{ range .Labels.SortedPairs }}• *{{ .Name }}:* `{{ .Value }}`
+{{ end }}
+{{ end }}{{ end }}
+
+{{ define "__alert_severity" }}{{ if .CommonLabels.severity }}{{ .CommonLabels.severity }}{{ else }}info{{ end }}{{ end }}
+
+{{ define "__alert_severity_prefix" }}{{ if eq (.CommonLabels.severity | toLower) "critical" }}🔴{{ else if eq (.CommonLabels.severity | toLower) "warning" }}🟡{{ else if eq (.CommonLabels.severity | toLower) "info" }}🔵{{ else }}ℹ️{{ end }}{{ end }}
+
+{{ define "__get_severity_color" }}{{ if eq (.CommonLabels.severity | toLower) "critical" }}danger{{ else if eq (.CommonLabels.severity | toLower) "warning" }}warning{{ else if eq (.CommonLabels.severity | toLower) "info" }}#36c5f0{{ else if eq .Status "resolved" }}good{{ else }}#36c5f0{{ end }}{{ end }}
+
+{{ define "__runbook_link" }}{{ if .CommonAnnotations.runbook }}
+<{{ .CommonAnnotations.runbook }}|📚 Runbook>{{ end }}{{ end }}
+
+{{ define "__dashboard_link" }}{{ if .CommonAnnotations.dashboard }}
+<{{ .CommonAnnotations.dashboard }}|📊 Dashboard>{{ end }}{{ end }}
+
+{{ define "slack.default.title" }}{{ template "__alert_severity_prefix" . }} {{ template "__subject" . }}{{ end }}
+{{ define "slack.default.username" }}{{ template "__alertmanager" . }}{{ end }}
+{{ define "slack.default.fallback" }}{{ template "slack.default.title" . }} | {{ .CommonAnnotations.summary }}{{ end }}
+{{ define "slack.default.pretext" }}{{ end }}
+{{ define "slack.default.titlelink" }}{{ template "__alertmanagerURL" . }}{{ end }}
+{{ define "slack.default.iconemoji" }}{{ end }}
+{{ define "slack.default.iconurl" }}{{ end }}
+{{ define "slack.default.text" }}{{ end }}
+{{ define "slack.default.footer" }}{{ .CommonAnnotations.description }}{{ end }}
+{{ define "slack.default.color" }}{{ template "__get_severity_color" . }}{{ end }}
+
+/**
+ * Modern Slack Block Kit Template
+ */
+{{ define "slack.blocks" }}
+{
+  "blocks": [
+    {
+      "type": "header",
+      "text": {
+        "type": "plain_text",
+        "text": "{{ template "__subject" . }}",
+        "emoji": true
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "{{ if .CommonAnnotations.summary }}*{{ .CommonAnnotations.summary }}*{{ else }}{{ .CommonLabels.alertname }}{{ end }}\n{{ if .CommonAnnotations.description }}{{ .CommonAnnotations.description }}{{ end }}"
+      }
+    },
+    {
+      "type": "divider"
+    },
+    {
+      "type": "section",
+      "fields": [
+        {
+          "type": "mrkdwn",
+          "text": "*Status:*\n{{ .Status | toUpper }}"
+        },
+        {
+          "type": "mrkdwn",
+          "text": "*Severity:*\n{{ template "__alert_severity" . }}"
+        },
+        {
+          "type": "mrkdwn",
+          "text": "*Started:*\n{{ (.Alerts.Firing | first).StartsAt.Format "Jan 2, 15:04 MST" }}"
+        },
+        {
+          "type": "mrkdwn",
+          "text": "*Service:*\n{{ if .CommonLabels.service }}{{ .CommonLabels.service }}{{ else }}{{ .CommonLabels.job }}{{ end }}"
+        }{{ if .CommonLabels.instance }},
+        {
+          "type": "mrkdwn",
+          "text": "*Instance:*\n{{ .CommonLabels.instance }}"
+        }{{ end }}
+      ]
+    },
+    {{ if gt (len .Alerts.Firing) 1 }}
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Alerts Firing:* {{ .Alerts.Firing | len }}"
+      }
+    },
+    {{ end }}
+    {{ if gt (len .Alerts.Resolved) 0 }}
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Recently Resolved:* {{ .Alerts.Resolved | len }}"
+      }
+    },
+    {{ end }}
+    {
+      "type": "divider"
+    },
+    {
+      "type": "actions",
+      "elements": [
+        {
+          "type": "button",
+          "text": {
+            "type": "plain_text",
+            "text": "👁 View in AlertManager",
+            "emoji": true
+          },
+          "url": "{{ .ExternalURL }}"
+        }{{ if .CommonAnnotations.runbook }},
+        {
+          "type": "button",
+          "text": {
+            "type": "plain_text",
+            "text": "📚 Runbook",
+            "emoji": true
+          },
+          "url": "{{ .CommonAnnotations.runbook }}"
+        }{{ end }}{{ if .CommonAnnotations.dashboard }},
+        {
+          "type": "button",
+          "text": {
+            "type": "plain_text",
+            "text": "📊 Dashboard",
+            "emoji": true
+          },
+          "url": "{{ .CommonAnnotations.dashboard }}"
+        }{{ end }}
+      ]
+    }
+  ],
+  "attachments": [
+    {
+      "color": "{{ template "slack.default.color" . }}",
+      "blocks": [
+        {{ if gt (len .Alerts.Firing) 0 }}
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*Firing Alerts:*"
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "{{ template "__text_alert_list" .Alerts.Firing }}"
+          }
+        }{{ if gt (len .Alerts.Resolved) 0 }},{{ end }}
+        {{ end }}
+        {{ if gt (len .Alerts.Resolved) 0 }}
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*Resolved Alerts:*"
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "{{ template "__text_alert_list" .Alerts.Resolved }}"
+          }
+        }
+        {{ end }}
+      ]
+    }
+  ]
+}
+{{ end }}
+
+/**
+ * Legacy Slack Attachment Template (for backward compatibility)
+ */
+{{ define "slack.attachment" }}
+{
+  "attachments": [
+    {
+      "title": "{{ template "slack.default.title" . }}",
+      "title_link": "{{ template "slack.default.titlelink" . }}",
+      "text": "{{ if .CommonAnnotations.summary }}{{ .CommonAnnotations.summary }}{{ else }}{{ .CommonLabels.alertname }}{{ end }}",
+      "fallback": "{{ template "slack.default.fallback" . }}",
+      "footer_icon": "{{ template "slack.default.iconurl" . }}",
+      "footer": "{{ .CommonLabels.alertname }} - {{ template "__alertmanager" . }}",
+      "ts": {{ .StartsAt.Unix }},
+      "color": "{{ template "slack.default.color" . }}",
+      "fields": [
+        {
+          "title": "Status",
+          "value": "{{ .Status | toUpper }}",
+          "short": true
+        },
+        {
+          "title": "Severity",
+          "value": "{{ template "__alert_severity" . }}",
+          "short": true
+        },
+        {
+          "title": "Service",
+          "value": "{{ if .CommonLabels.service }}{{ .CommonLabels.service }}{{ else }}{{ .CommonLabels.job }}{{ end }}",
+          "short": true
+        },
+        {{ if .CommonLabels.instance }}
+        {
+          "title": "Instance",
+          "value": "{{ .CommonLabels.instance }}",
+          "short": true
+        },
+        {{ end }}
+        {
+          "title": "Summary",
+          "value": "{{ if .CommonAnnotations.summary }}{{ .CommonAnnotations.summary }}{{ else }}{{ .CommonLabels.alertname }}{{ end }}",
+          "short": false
+        },
+        {
+          "title": "Description",
+          "value": "{{ if .CommonAnnotations.description }}{{ .CommonAnnotations.description }}{{ end }}",
+          "short": false
+        },
+        {
+          "title": "Details",
+          "value": "{{ range .Alerts.Firing }}Alert: {{ .Annotations.summary }}\n{{ end }}",
+          "short": false
+        }
+      ],
+      "actions": [
+        {
+          "type": "button",
+          "text": "👁 View in AlertManager",
+          "url": "{{ template "__alertmanagerURL" . }}"
+        }{{ if .CommonAnnotations.runbook }},
+        {
+          "type": "button",
+          "text": "📚 Runbook",
+          "url": "{{ .CommonAnnotations.runbook }}"
+        }{{ end }}{{ if .CommonAnnotations.dashboard }},
+        {
+          "type": "button",
+          "text": "📊 Dashboard",
+          "url": "{{ .CommonAnnotations.dashboard }}"
+        }{{ end }}
+      ]
+    }
+  ]
+}
+{{ end }}
+
+{{ define "__alertmanager" }}AlertManager{{ end }}
+{{ define "__alertmanagerURL" }}{{ .ExternalURL }}/#/alerts?receiver={{ .Receiver | urlquery }}{{ end }}
+
+{{ define "__subject" }}[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .GroupLabels.SortedPairs.Values | join " " }} {{ if gt (len .CommonLabels) (len .GroupLabels) }}({{ with .CommonLabels.Remove .GroupLabels.Names }}{{ .Values | join " " }}{{ end }}){{ end }}{{ end }}
+
+{{ define "__alert_severity" }}{{ if .CommonLabels.severity }}{{ .CommonLabels.severity | toLower }}{{ else }}{{ if .CommonLabels.Severity }}{{ .CommonLabels.Severity | toLower }}{{ else }}unknown{{ end }}{{ end }}{{ end }}
+
+{{ define "__alert_severity_prefix" }}{{ if eq (.CommonLabels.severity | toLower) "critical" }}:red_circle:{{ else if eq (.CommonLabels.severity | toLower) "warning" }}:warning:{{ else if eq (.CommonLabels.severity | toLower) "info" }}:information_source:{{ else }}:question:{{ end }} {{ end }}
+
+{{ define "__text_alert_list" }}{{ range .Alerts }}
+*Alert:* {{ .Annotations.summary }}{{ if .Labels.severity }} - `{{ .Labels.severity | toUpper }}`{{ end }}
+*Description:* {{ .Annotations.description }}
+*Details:*
+{{ range .Labels.SortedPairs }} • *{{ .Name }}:* `{{ .Value }}`
+{{ end }}{{ if gt (len .Annotations.SortedPairs) 2 }}*Additional Information:*
+{{ range $key, $value := .Annotations }}{{ if and (ne $key "summary") (ne $key "description") }} • *{{ $key }}:* {{ $value }}
+{{ end }}{{ end }}{{ end }}
+{{ if gt (len .GeneratorURL) 0 }}*Source:* {{ .GeneratorURL }}{{ end }}
+{{ end }}{{ end }}
+
+{{ define "__get_severity_color" }}{{ if eq (.CommonLabels.severity | toLower) "critical" }}danger{{ else if eq (.CommonLabels.severity | toLower) "warning" }}warning{{ else if eq (.CommonLabels.severity | toLower) "info" }}good{{ else }}#439FE0{{ end }}{{ end }}
+
+{{ define "__runbook_link" }}{{ if .CommonAnnotations.runbook_url }}{{ .CommonAnnotations.runbook_url }}{{ else if .CommonAnnotations.runbook }}{{ .CommonAnnotations.runbook }}{{ else }}{{ end }}{{ end }}
+
+{{ define "slack.default.title" }}{{ template "__alert_severity_prefix" . }} {{ template "__subject" . }}{{ end }}
+
+{{ define "slack.default.username" }}{{ template "__alertmanager" . }}{{ end }}
+
+{{ define "slack.default.fallback" }}{{ template "slack.default.title" . }} | {{ template "__alertmanagerURL" . }}{{ end }}
+
+{{ define "slack.default.pretext" }}{{ .CommonAnnotations.description }}{{ end }}
+
+{{ define "slack.default.titlelink" }}{{ template "__alertmanagerURL" . }}{{ end }}
+
+{{ define "slack.default.iconemoji" }}{{ if eq .Status "firing" }}:fire:{{ else }}:ok_hand:{{ end }}{{ end }}
+
+{{ define "slack.default.iconurl" }}{{ end }}
+
+{{ define "slack.default.text" }}{{ if gt (len .Alerts.Firing) 0 }}
+*Alerts Firing:* {{ .Alerts.Firing | len }}
+{{ template "__text_alert_list" .Alerts.Firing }}{{ end }}
+{{ if gt (len .Alerts.Resolved) 0 }}
+*Alerts Resolved:* {{ .Alerts.Resolved | len }}
+{{ template "__text_alert_list" .Alerts.Resolved }}{{ end }}
+{{ if gt (len (template "__runbook_link" .)) 0 }}
+*Runbook:* {{ template "__runbook_link" . }}{{ end }}
+*Dashboard:* {{ .CommonAnnotations.dashboard }}
+*Alertmanager:* {{ template "__alertmanagerURL" . }}{{ end }}
+
+{{ define "slack.default.footer" }}{{ .CommonAnnotations.instance_name }}{{ end }}
+
+{{ define "slack.default.color" }}{{ template "__get_severity_color" . }}{{ end }}
+
+{{ define "slack.legacy_attachment" }}
+{
+  "channel": "{{ .Channel }}",
+  "username": "{{ template "slack.default.username" . }}",
+  "icon_emoji": "{{ template "slack.default.iconemoji" . }}",
+  "attachments": [
+    {
+      "title": "{{ template "slack.default.title" . }}",
+      "title_link": "{{ template "slack.default.titlelink" . }}",
+      "pretext": "{{ template "slack.default.pretext" . }}",
+      "text": "{{ template "slack.default.text" . }}",
+      "fallback": "{{ template "slack.default.fallback" . }}",
+      "color": "{{ template "slack.default.color" . }}",
+      "footer": "{{ template "slack.default.footer" . }}"
+    }
+  ]
+}
+{{ end }}
+
+{{ define "slack.modern_blocks" }}
+{
+  "channel": "{{ .Channel }}",
+  "username": "{{ template "slack.default.username" . }}",
+  "icon_emoji": "{{ template "slack.default.iconemoji" . }}",
+  "blocks": [
+    {
+      "type": "header",
+      "text": {
+        "type": "plain_text",
+        "text": "{{ .Status | toUpper }}: {{ .GroupLabels.SortedPairs.Values | join " " }}",
+        "emoji": true
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Status:* {{ .Status | toUpper }}{{ if eq .Status "firing" }} ({{ .Alerts.Firing | len }}){{ end }}\n*Severity:* {{ template "__alert_severity" . | toUpper }}\n*Summary:* {{ .CommonAnnotations.summary }}"
+      }
+    },
+    {
+      "type": "divider"
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Description:*\n{{ .CommonAnnotations.description }}"
+      }
+    }{{ if gt (len .CommonLabels.SortedPairs) 0 }},
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Common Labels:*\n{{ range .CommonLabels.SortedPairs }}• *{{ .Name }}:* {{ .Value }}\n{{ end }}"
+      }
+    }{{ end }}{{ if gt (len (template "__runbook_link" .)) 0 }},
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Runbook:*"
+      },
+      "accessory": {
+        "type": "button",
+        "text": {
+          "type": "plain_text",
+          "text": "View Runbook",
+          "emoji": true
+        },
+        "url": "{{ template "__runbook_link" . }}"
+      }
+    }{{ end }},
+    {
+      "type": "actions",
+      "elements": [
+        {
+          "type": "button",
+          "text": {
+            "type": "plain_text",
+            "text": "View in Alertmanager",
+            "emoji": true
+          },
+          "url": "{{ template "__alertmanagerURL" . }}"
+        }{{ if .CommonAnnotations.dashboard }},
+        {
+          "type": "button",
+          "text": {
+            "type": "plain_text",
+            "text": "View Dashboard",
+            "emoji": true
+          },
+          "url": "{{ .CommonAnnotations.dashboard }}"
+        }{{ end }}
+      ]
+    },
+    {
+      "type": "context",
+      "elements": [
+        {
+          "type": "mrkdwn",
+          "text": "{{ if .CommonAnnotations.instance_name }}{{ .CommonAnnotations.instance_name }} | {{ end }}Sent at {{ .StartsAt.Format "2006-01-02 15:04:05 MST" }}"
+        }
+      ]
+    }
+  ]
+}
+{{ end }}
+
+{{ define "slack" }}{{ template "slack.modern_blocks" . }}{{ end }}
+
+{{ define "__alertmanager" }}AlertManager{{ end }}
+{{ define "__alertmanagerURL" }}{{ .ExternalURL }}/#/alerts?receiver={{ .Receiver | urlquery }}{{ end }}
+
+{{ define "__subject" }}[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .GroupLabels.SortedPairs.Values | join " " }} {{ if gt (len .CommonLabels) (len .GroupLabels) }}({{ with .CommonLabels.Remove .GroupLabels.Names }}{{ .Values | join " " }}{{ end }}){{ end }}{{ end }}
+
+{{ define "__text_alert_list" }}{{ range . }}
+*Alert:* {{ .Annotations.summary }}{{ if .Labels.severity }} - `{{ .Labels.severity }}`{{ end }}
+*Description:* {{ .Annotations.description }}
+*Details:*
+{{ range .Labels.SortedPairs }}• *{{ .Name }}:* `{{ .Value }}`
+{{ end }}
+{{ if .Annotations.runbook }}*Runbook:* {{ .Annotations.runbook }}{{ end }}
+{{ if .Annotations.dashboard }}*Dashboard:* {{ .Annotations.dashboard }}{{ end }}
+{{ if .Annotations.logs }}*Logs:* {{ .Annotations.logs }}{{ end }}
+*Source:* {{ if .GeneratorURL }}[{{ .GeneratorURL }}]({{ .GeneratorURL }}){{ else }}Unavailable{{ end }}
+*Started:* {{ .StartsAt | since }}
+{{ end }}{{ end }}
+
+{{ define "slack.default.title" }}{{ template "__subject" . }}{{ end }}
+{{ define "slack.default.username" }}{{ template "__alertmanager" . }}{{ end }}
+{{ define "slack.default.fallback" }}{{ template "slack.default.title" . }} | {{ template "slack.default.titlelink" . }}{{ end }}
+{{ define "slack.default.pretext" }}{{ end }}
+{{ define "slack.default.titlelink" }}{{ template "__alertmanagerURL" . }}{{ end }}
+{{ define "slack.default.iconemoji" }}:bell:{{ end }}
+{{ define "slack.default.iconurl" }}{{ end }}
+{{ define "slack.default.text" }}{{ end }}
+{{ define "slack.default.footer" }}{{ .Alerts | len }} alert{{ if gt (len .Alerts) 1 }}s{{ end }} - <{{ template "__alertmanagerURL" . }}|Open in {{ template "__alertmanager" . }}>{{ end }}
+
+{{ define "slack.default.color" }}
+{{- if eq .Status "firing" -}}
+  {{- if eq .CommonLabels.severity "critical" -}}
+    danger
+  {{- else if eq .CommonLabels.severity "warning" -}}
+    warning
+  {{- else if eq .CommonLabels.severity "info" -}}
+    #0080ff
+  {{- else -}}
+    #888888
+  {{- end -}}
+{{- else -}}
+  good
+{{- end -}}
+{{ end }}
+
+{{ define "__slack_text_message" }}
+{{ range .Alerts }}
+*Status:* `{{ .Status | toUpper }}`
+{{ if eq .Status "firing" }}*Started:* {{ .StartsAt | since }}{{ else if eq .Status "resolved" }}*Resolved:* {{ .EndsAt | since }}{{ end }}
+*Alert:* {{ .Annotations.summary }}
+*Description:* {{ .Annotations.description }}
+*Severity:* `{{ .Labels.severity }}`
+{{ if .Labels.instance }}*Instance:* `{{ .Labels.instance }}`{{ end }}
+{{ if .Labels.job }}*Job:* `{{ .Labels.job }}`{{ end }}
+{{ if .Annotations.runbook }}*Runbook:* {{ .Annotations.runbook }}{{ end }}
+{{ if .Annotations.dashboard }}*Dashboard:* {{ .Annotations.dashboard }}{{ end }}
+{{ if .Annotations.logs }}*Logs:* {{ .Annotations.logs }}{{ end }}
+{{ range .Labels.SortedPairs }}{{ if and (ne .Name "severity") (ne .Name "instance") (ne .Name "job") }}• *{{ .Name }}:* `{{ .Value }}`
+{{ end }}{{ end }}
+
+{{ end }}
+{{ end }}
+
+{{ define "slack.title" }}{{ template "slack.default.title" . }}{{ end }}
+{{ define "slack.username" }}{{ template "slack.default.username" . }}{{ end }}
+{{ define "slack.fallback" }}{{ template "slack.default.fallback" . }}{{ end }}
+{{ define "slack.pretext" }}{{ template "slack.default.pretext" . }}{{ end }}
+{{ define "slack.titlelink" }}{{ template "slack.default.titlelink" . }}{{ end }}
+{{ define "slack.iconemoji" }}{{ template "slack.default.iconemoji" . }}{{ end }}
+{{ define "slack.iconurl" }}{{ template "slack.default.iconurl" . }}{{ end }}
+{{ define "slack.text" }}{{ template "__slack_text_message" . }}{{ end }}
+{{ define "slack.footer" }}{{ template "slack.default.footer" . }}{{ end }}
+{{ define "slack.color" }}{{ template "slack.default.color" . }}{{ end }}
+
+<!-- Classic Slack attachment-based message format -->
+{{ define "slack.message" }}
+{
+  "attachments": [
+    {
+      "title": "{{ template "slack.title" . }}",
+      "title_link": "{{ template "slack.titlelink" . }}",
+      "pretext": "{{ template "slack.pretext" . }}",
+      "text": "{{ template "slack.text" . }}",
+      "fallback": "{{ template "slack.fallback" . }}",
+      "color": "{{ template "slack.color" . }}",
+      "footer": "{{ template "slack.footer" . }}",
+      "footer_icon": "https://raw.githubusercontent.com/prometheus/prometheus/main/documentation/images/favicon.png",
+      "ts": {{ .StartsAt.Unix }}
+    }
+  ],
+  "username": "{{ template "slack.username" . }}",
+  "channel": "{{ .CommonLabels.channel }}",
+  "icon_emoji": "{{ template "slack.iconemoji" . }}",
+  "icon_url": "{{ template "slack.iconurl" . }}"
+}
+{{ end }}
+
+<!-- Modern Slack Block Kit format -->
+{{ define "slack.blocks" }}
+{
+  "blocks": [
+    {
+      "type": "header",
+      "text": {
+        "type": "plain_text",
+        "text": "{{ template "slack.title" . }}",
+        "emoji": true
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "{{ template "slack.text" . }}"
+      }
+    },
+    {
+      "type": "divider"
+    },
+    {
+      "type": "context",
+      "elements": [
+        {
+          "type": "mrkdwn",
+          "text": "{{ template "slack.footer" . }}"
+        }
+      ]
+    }
+  ],
+  "username": "{{ template "slack.username" . }}",
+  "channel": "{{ .CommonLabels.channel }}",
+  "icon_emoji": "{{ template "slack.iconemoji" . }}"
+}
+{{ end }}
+
+      ]
+    }
+  ],
+  "icon_emoji": "{{ template "slack.iconemoji" . }}",
+  "username": "AlertManager"
+}
+{{ end }}
+
+{{ define "slack.title" }}
+[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ if .CommonLabels.alertname }}{{ .CommonLabels.alertname }}{{ else }}{{ .GroupLabels.SortedPairs.Values | join " " }}{{ end }}
+{{ end }}
+
+{{ define "slack.color" }}
+{{- if eq .Status "firing" -}}
+  {{- if eq .CommonLabels.severity "critical" -}}
+    danger
+  {{- else if eq .CommonLabels.severity "warning" -}}
+    warning
+  {{- else -}}
+    #439FE0
+  {{- end -}}
+{{- else -}}
+  good
+{{- end -}}
+{{ end }}
+
+{{ define "slack.text" }}
+{{- if .CommonAnnotations.summary -}}
+*Summary:* {{ .CommonAnnotations.summary }}
+{{- end }}
+{{- if .CommonAnnotations.description -}}
+*Description:* {{ .CommonAnnotations.description }}
+{{- end }}
+{{- if .CommonLabels.severity -}}
+*Severity:* {{ .CommonLabels.severity }}
+{{- end }}
+
+{{ if gt (len .Alerts.Firing) 0 }}
+*Alerts Firing:*
+{{ range .Alerts.Firing }}
+• {{ if .Labels.instance }}*Instance:* {{ .Labels.instance }}{{ end }}{{ if .Labels.host }}*Host:* {{ .Labels.host }}{{ end }}
+  {{ if .Annotations.description }}{{ .Annotations.description }}{{ else }}{{ .Annotations.message }}{{ end }}
+  {{ if .Labels.job }}*Job:* {{ .Labels.job }}{{ end }}
+  *Started:* {{ .StartsAt | since }}
+{{ end }}
+{{ end }}
+
+{{ if gt (len .Alerts.Resolved) 0 }}
+*Alerts Resolved:*
+{{ range .Alerts.Resolved }}
+• {{ if .Labels.instance }}*Instance:* {{ .Labels.instance }}{{ end }}{{ if .Labels.host }}*Host:* {{ .Labels.host }}{{ end }}
+  {{ if .Annotations.description }}{{ .Annotations.description }}{{ else }}{{ .Annotations.message }}{{ end }}
+  {{ if .Labels.job }}*Job:* {{ .Labels.job }}{{ end }}
+  *Resolved:* {{ .EndsAt | since }}
+{{ end }}
+{{ end }}
+
+{{ if .ExternalURL }}*Alert Manager:* {{ .ExternalURL }}{{ end }}
+{{ end }}
+
+{{ define "slack.default.message" }}
+{
+  "attachments": [
+    {
+      "title": {{ template "slack.title" . }},
+      "title_link": "{{ .ExternalURL }}",
+      "text": {{ template "slack.text" . }},
+      "fallback": {{ template "slack.title" . }},
+      "color": {{ template "slack.color" . }},
+      "footer": "Prometheus Alert Manager",
+      "footer_icon": "https://avatars3.githubusercontent.com/u/3380462",
+      "ts": {{ .StartsAt.Unix }}
+    }
+  ]
+}
+{{ end }}
+
+{{ define "slack.default.blocks" }}
+{
+  "blocks": [
+    {
+      "type": "header",
+      "text": {
+        "type": "plain_text",
+        "text": {{ template "slack.title" . | quote }},
+        "emoji": true
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": {{ template "slack.text" . | quote }}
+      }
+    },
+    {
+      "type": "context",
+      "elements": [
+        {
+          "type": "mrkdwn",
+          "text": "<!date^{{ .StartsAt.Unix }}^Alert triggered {date_num} {time_secs}|Alert triggered {{ .StartsAt }}>"
+        }
+      ]
+    },
+    {
+      "type": "actions",
+      "elements": [
+        {
+          "type": "button",
+          "text": {
+            "type": "plain_text",
+            "text": "View in Alertmanager",
+            "emoji": true
+          },
+          "url": "{{ .ExternalURL }}"
+        }
+      ]
+    }
+  ]
+}
+{{ end }}
+
+{{ define "__alertmanager" }}AlertManager{{ end }}
+{{ define "__alertmanagerURL" }}{{ .ExternalURL }}/#/alerts?receiver={{ .Receiver | urlquery }}{{ end }}
+
+{{ define "__subject" }}[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .GroupLabels.SortedPairs.Values | join " " }} {{ if gt (len .CommonLabels) (len .GroupLabels) }}({{ with .CommonLabels.Remove .GroupLabels.Names }}{{ .Values | join " " }}{{ end }}){{ end }}{{ end }}
+{{ define "__description" }}{{ end }}
+
+{{ define "__text_alert_list" }}{{ range . }}Labels:
+{{ range .Labels.SortedPairs }} - {{ .Name }} = {{ .Value }}
+{{ end }}Annotations:
+{{ range .Annotations.SortedPairs }} - {{ .Name }} = {{ .Value }}
+{{ end }}Source: {{ .GeneratorURL }}
+{{ end }}{{ end }}
+
+{{ define "slack.default.title" }}{{ template "__subject" . }}{{ end }}
+{{ define "slack.default.username" }}{{ template "__alertmanager" . }}{{ end }}
+{{ define "slack.default.fallback" }}{{ template "slack.default.title" . }} | {{ template "slack.default.titlelink" . }}{{ end }}
+{{ define "slack.default.pretext" }}{{ end }}
+{{ define "slack.default.titlelink" }}{{ template "__alertmanagerURL" . }}{{ end }}
+{{ define "slack.default.iconemoji" }}{{ end }}
+{{ define "slack.default.iconurl" }}{{ end }}
+{{ define "slack.default.text" }}{{ end }}
+{{ define "slack.default.footer" }}{{ end }}
+
+{{ define "slack.default.message" }}
+{
+  "channel": "{{ .Channel }}",
+  "username": "{{ template "slack.default.username" . }}",
+  "icon_emoji": "{{ template "slack.default.iconemoji" . }}",
+  "icon_url": "{{ template "slack.default.iconurl" . }}",
+  "attachments": [
+    {
+      "title": "{{ template "slack.default.title" . }}",
+      "title_link": "{{ template "slack.default.titlelink" . }}",
+      "pretext": "{{ template "slack.default.pretext" . }}",
+      "text": "{{ template "slack.default.text" . }}",
+      "fallback": "{{ template "slack.default.fallback" . }}",
+      "color": "{{ if eq .Status "firing" }}danger{{ else }}good{{ end }}",
+      "footer": "{{ template "slack.default.footer" . }}",
+      "fields": [
+        {
+          "title": "Status",
+          "value": "{{ .Status | toUpper }}",
+          "short": true
+        },
+        {
+          "title": "Severity",
+          "value": "{{ .CommonLabels.severity | upper }}",
+          "short": true
+        }
+      ],
+      "actions": [
+        {
+          "type": "button",
+          "text": "View in Alertmanager",
+          "url": "{{ template "__alertmanagerURL" . }}"
+        }
+      ]
+    },
+    {
+      "text": "{{ range .Alerts.Firing }}*Alert:* {{ .Labels.alertname }}{{ if .Labels.severity }} - `{{ .Labels.severity | toUpper }}`{{ end }}\n*Description:* {{ .Annotations.description }}\n*Details:*\n{{ range .Labels.SortedPairs }}• {{ .Name }}: {{ .Value }}\n{{ end }}{{ end }}{{ if .Alerts.Resolved }}{{ range .Alerts.Resolved }}*Resolved:* {{ .Labels.alertname }}{{ if .Labels.severity }} - `{{ .Labels.severity | toUpper }}`{{ end }}\n*Description:* {{ .Annotations.description }}\n{{ end }}{{ end }}",
+      "color": "{{ if eq .Status "firing" }}danger{{ else }}good{{ end }}",
+      "footer": "Prometheus | {{ .CommonLabels.job }}",
+      "ts": "{{ .StartsAt.Unix }}"
+    }
+  ]
+}
+{{ end }}
+
+{{ define "slack.title" }}{{ template "slack.default.title" . }}{{ end }}
+{{ define "slack.text" }}{{ template "slack.default.text" . }}{{ end }}
+{{ define "slack.username" }}{{ template "slack.default.username" . }}{{ end }}
+{{ define "slack.channel" }}{{ template "slack.default.channel" . }}{{ end }}
+{{ define "slack.footer" }}{{ template "slack.default.footer" . }}{{ end }}
+{{ define "slack.fallback" }}{{ template "slack.default.fallback" . }}{{ end }}
+{{ define "slack.callbackid" }}{{ template "slack.default.callbackid" . }}{{ end }}
+{{ define "slack.iconemoji" }}{{ template "slack.default.iconemoji" . }}{{ end }}
+{{ define "slack.iconurl" }}{{ template "slack.default.iconurl" . }}{{ end }}
+{{ define "slack.pretext" }}{{ template "slack.default.pretext" . }}{{ end }}
+{{ define "slack.attachment" }}{{ template "slack.default.attachment" . }}{{ end }}
+{{ define "slack.color" }}{{ template "slack.default.color" . }}{{ end }}
+{{ define "slack.buttons" }}{{ template "slack.default.buttons" . }}{{ end }}
+{{ define "slack.fields" }}{{ template "slack.default.fields" . }}{{ end }}
+{{ define "slack.short_field" }}{{ template "slack.default.short_field" . }}{{ end }}
+
+{{ define "slack.default.title" }}{{ template "__alertmanager" . }}{{ range .Alerts.Firing }} {{ .Annotations.summary }}{{ if ne .Annotations.description "" }} - {{ .Annotations.description }}{{ end }}{{ end }}{{ end }}
+
+{{ define "slack.default.username" }}Alertmanager{{ end }}
+{{ define "slack.default.channel" }}{{ if .CommonLabels.channel }}{{ .CommonLabels.channel }}{{ else }}#alerts{{ end }}{{ end }}
+{{ define "slack.default.footer" }}{{ range .CommonLabels.SortedPairs }}{{ .Name }}: {{ .Value }} | {{ end }}{{ end }}
+{{ define "slack.default.fallback" }}{{ template "slack.default.title" . }} | {{ template "slack.default.titlelink" . }}{{ end }}
+{{ define "slack.default.callbackid" }}{{ end }}
+{{ define "slack.default.iconemoji" }}:warning:{{ end }}
+{{ define "slack.default.iconurl" }}{{ end }}
+{{ define "slack.default.pretext" }}{{ end }}
+
+{{ define "slack.default.color" }}{{ if eq .Status "firing" }}danger{{ else }}good{{ end }}{{ end }}
+
+{{ define "__alertmanager" }}AlertManager{{ end }}
+{{ define "__alertmanagerURL" }}{{ if .ExternalURL }}{{ .ExternalURL }}{{ else }}{{ end }}{{ end }}
+
+{{ define "slack.default.short_field" }}
+{
+  "title": "{{ .Name }}",
+  "value": "{{ .Value }}",
+  "short": true
+}
+{{ end }}
+
+{{ define "slack.default.fields" }}
+[
+  {{ if eq (len .Alerts.Firing) 1 -}}
+    {{ range .Alerts.Firing -}}
+      {{ range .Labels.SortedPairs -}}
+        {{- if ne .Name "alertname" -}}
+          {
+            "title": "{{ .Name }}",
+            "value": "{{ .Value }}",
+            "short": true
+          },
+        {{- end -}}
+      {{- end -}}
+    {{- end -}}
+  {{ else -}}
+    {
+      "title": "Firing Alerts",
+      "value": "{{ .Alerts.Firing | len }}",
+      "short": true
+    },
+  {{- end -}}
+
+  {{ if .Alerts.Resolved -}}
+    {
+      "title": "Resolved Alerts",
+      "value": "{{ .Alerts.Resolved | len }}",
+      "short": true
+    },
+  {{- end -}}
+]
+{{ end }}
+
+{{ define "slack.default.buttons" }}
+[
+  {{ if gt (len .Alerts.Firing) 0 -}}
+    {
+      "type": "button",
+      "text": "{{ .Alerts.Firing | len }} firing alert{{ if gt (len .Alerts.Firing) 1 }}s{{ end }}",
+      "url": "{{ template "__alertmanagerURL" . }}/#/alerts?receiver={{ .Receiver }}"
+    },
+  {{- end -}}
+  
+  {{ if gt (len .Alerts.Resolved) 0 -}}
+    {
+      "type": "button",
+      "text": "{{ .Alerts.Resolved | len }} resolved alert{{ if gt (len .Alerts.Resolved) 1 }}s{{ end }}",
+      "url": "{{ template "__alertmanagerURL" . }}/#/alerts?receiver={{ .Receiver }}"
+    },
+  {{- end -}}
+]
+{{ end }}
+
+{{ define "slack.default.text" }}{{ if gt (len .Alerts.Firing) 0 -}}*Alerts Firing:*
+{{ range .Alerts.Firing -}}
+• {{ .Annotations.summary }}{{ if .Annotations.description }} - {{ .Annotations.description }}{{ end }}
+{{ end -}}
+{{ end -}}{{ if gt (len .Alerts.Resolved) 0 -}}*Alerts Resolved:*
+{{ range .Alerts.Resolved -}}
+• {{ .Annotations.summary }}{{ if .Annotations.description }} - {{ .Annotations.description }}{{ end }}
+{{ end -}}
+{{ end -}}
+{{ end }}
+
+{{ define "slack.default.titlelink" }}{{ template "__alertmanagerURL" . }}/#/alerts?receiver={{ .Receiver }}{{ end }}
+
+{{ define "slack.default.attachment" }}
+{
+  "title": "{{ template "slack.title" . }}",
+  "title_link": "{{ template "slack.titlelink" . }}",
+  "text": "{{ template "slack.text" . }}",
+  "fallback": "{{ template "slack.fallback" . }}",
+  "callback_id": "{{ template "slack.callbackid" . }}",
+  "color": "{{ template "slack.color" . }}",
+  "pretext": "{{ template "slack.pretext" . }}",
+  "footer": "{{ template "slack.footer" . }}",
+  "fields": {{ template "slack.fields" . }},
+  "actions": {{ template "slack.buttons" . }},
+  "mrkdwn_in": ["text", "pretext"]
+}
+{{ end }}
+
+{{ define "slack.titlelink" }}{{ template "slack.default.titlelink" . }}{{ end }}
+
+{{ define "slack.default.message" }}
+{
+    "channel": "{{ .channel }}",
+    "username": "{{ template "slack.default.username" . }}",
+    "icon_emoji": "{{ template "slack.default.iconemoji" . }}",
+    "icon_url": "{{ template "slack.default.iconurl" . }}",
+    "attachments": [
+        {{ template "slack.default.attachment" . }}
+    ]
+}
+{{ end }}
+
+{{ define "slack.default.title" }}
+[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .GroupLabels.SortedPairs.Values | join " " }} {{ if gt (len .CommonLabels) (len .GroupLabels) }}({{ with .CommonLabels.Remove .GroupLabels.Names }}{{ .Values | join " " }}{{ end }}){{ end }}
+{{ end }}
+
+{{ define "slack.default.username" }}AlertManager{{ end }}
+
+{{ define "slack.default.fallback" }}
+{{ template "slack.default.title" . }}
+{{ range .Alerts }}
+*Alert:* {{ .Annotations.summary }} {{ .Labels.severity | toUpper }}
+*Description:* {{ .Annotations.description }}
+*Details:*
+{{ range .Labels.SortedPairs }} • *{{ .Name }}:* {{ .Value }}
+{{ end }}
+{{ end }}
+{{ end }}
+
+{{ define "slack.default.pretext" }}{{ end }}
+
+{{ define "slack.default.iconemoji" }}{{ if eq .Status "firing" }}:fire:{{ else }}:ok:{{ end }}{{ end }}
+
+{{ define "slack.default.iconurl" }}{{ end }}
+
+{{ define "slack.default.text" }}{{ end }}
+
+{{ define "slack.default.footer" }}Managed by Alertmanager{{ end }}
+
+{{ define "slack.default.color" }}
+{{- if eq .Status "firing" -}}
+  {{- if eq .CommonLabels.severity "critical" -}}
+    danger
+  {{- else if eq .CommonLabels.severity "warning" -}}
+    warning
+  {{- else -}}
+    #439FE0
+  {{- end -}}
+{{- else -}}
+  good
+{{- end -}}
+{{ end }}
+
+{{ define "slack.default.attachment" }}
+{
+  "fallback": "{{ template "slack.default.fallback" . }}",
+  "pretext": "{{ template "slack.default.pretext" . }}",
+  "title": "{{ template "slack.default.title" . }}",
+  "title_link": "{{ template "slack.default.titlelink" . }}",
+  "text": "{{ template "slack.default.text" . }}",
+  "color": "{{ template "slack.default.color" . }}",
+  "fields": [
+    {
+      "title": "Status",
+      "value": "{{ .Status | toUpper }}{{ if eq .Status "firing" }} ({{ .Alerts.Firing | len }}){{ end }}",
+      "short": true
+    },
+    {
+      "title": "Severity",
+      "value": "{{ .CommonLabels.severity | toUpper }}",
+      "short": true
+    }{{ if gt (len .Alerts.Firing) 0 }},
+    {
+      "title": "Alerts",
+      "value": "{{ range .Alerts.Firing }}• {{ .Annotations.summary }}\n{{ if .Annotations.description }}{{ .Annotations.description }}\n{{ end }}{{ end }}",
+      "short": false
+    }{{ end }}{{ if gt (len .Alerts.Resolved) 0 }},
+    {
+      "title": "Resolved",
+      "value": "{{ range .Alerts.Resolved }}• {{ .Annotations.summary }}\n{{ end }}",
+      "short": false
+    }{{ end }}{{ if gt (len .GroupLabels.SortedPairs) 0 }},
+    {
+      "title": "Grouped By",
+      "value": "{{ range .GroupLabels.SortedPairs }}• {{ .Name }}: {{ .Value }}\n{{ end }}",
+      "short": false
+    }{{ end }}{{ with .CommonAnnotations }},
+    {
+      "title": "Common Details",
+      "value": "{{ range .SortedPairs }}• {{ .Name }}: {{ .Value }}\n{{ end }}",
+      "short": false
+    }{{ end }}{{ if gt (len .Alerts.Firing) 0 }}{{ with (index .Alerts.Firing 0) }}{{ if .GeneratorURL }},
+    {
+      "title": "Prometheus",
+      "value": "{{ .GeneratorURL }}",
+      "short": false
+    }{{ end }}{{ if .Annotations.dashboard }},
+    {
+      "title": "Dashboard",
+      "value": "{{ .Annotations.dashboard }}",
+      "short": false
+    }{{ end }}{{ if .Annotations.runbook }},
+    {
+      "title": "Runbook",
+      "value": "{{ .Annotations.runbook }}",
+      "short": false
+    }{{ end }}{{ if .Annotations.kibana }},
+    {
+      "title": "Logs",
+      "value": "{{ .Annotations.kibana }}",
+      "short": false
+    }{{ end }}{{ end }}{{ end }}
+  ],
+  "footer": "{{ template "slack.default.footer" . }}",
+  "ts": {{ now.Unix }}
+}
+{{ end }}
+
+{{ define "slack.default.titlelink" }}{{ end }}
+
+{{ define "slack.title" }}{{ template "slack.default.title" . }}{{ end }}
+{{ define "slack.username" }}{{ template "slack.default.username" . }}{{ end }}
+{{ define "slack.fallback" }}{{ template "slack.default.fallback" . }}{{ end }}
+{{ define "slack.pretext" }}{{ template "slack.default.pretext" . }}{{ end }}
+{{ define "slack.text" }}{{ template "slack.default.text" . }}{{ end }}
+{{ define "slack.footer" }}{{ template "slack.default.footer" . }}{{ end }}
+{{ define "slack.color" }}{{ template "slack.default.color" . }}{{ end }}
+{{ define "slack.iconemoji" }}{{ template "slack.default.iconemoji" . }}{{ end }}
+{{ define "slack.iconurl" }}{{ template "slack.default.iconurl" . }}{{ end }}
+{{ define "slack.titlelink" }}{{ template "slack
+

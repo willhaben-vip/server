@@ -1,0 +1,48 @@
+[Unit]
+Description=Rotate Backup Encryption Keys
+Documentation=https://prometheus.io/docs/
+After=network.target
+# Don't run this during backup operations
+Conflicts=prometheus-backup.service grafana-backup.service backup-encryption.service
+
+[Service]
+Type=oneshot
+# Run as a dedicated user with minimal privileges
+User=keymanager
+Group=keymanager
+ExecStart=/opt/scripts/monitoring/key-management.sh rotate
+# Set a reasonable timeout for key operations
+TimeoutStartSec=10m
+SuccessExitStatus=0
+StandardOutput=journal
+StandardError=journal
+
+# Environment variables
+Environment="KEY_STORE_PATH=/etc/prometheus/keys"
+Environment="KEY_ROTATION_AGE=30" # Days before key rotation
+Environment="KEY_BACKUP_PATH=/var/backups/keys"
+
+# Notify on failure
+ExecStopPost=/bin/sh -c '[ $EXIT_STATUS != 0 ] && /usr/bin/systemd-cat -t key-rotation -p err echo "Key rotation failed with status $EXIT_STATUS" && /usr/bin/wall "CRITICAL: Encryption key rotation failed"'
+
+# Security hardening - extremely important for key management
+ProtectSystem=strict
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectHome=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+RestrictRealtime=true
+MemoryDenyWriteExecute=true
+RestrictSUIDSGID=true
+LockPersonality=true
+# Only allow writing to the key directories
+ReadWritePaths=/etc/prometheus/keys /var/backups/keys /var/log/monitoring
+# Limited filesystem namespace
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target
+

@@ -1,0 +1,18 @@
+[Unit]
+Description=Schedule Grafana Dashboard Backups
+Documentation=https://grafana.com/docs/
+Requires=grafana-backup.service
+
+[Timer]
+# Run daily at 1:30 AM
+OnCalendar=*-*-* 01:30:00
+# Add some randomization to prevent all backup jobs from running simultaneously
+RandomizedDelaySec=15min
+# Catch up on missed runs when system was down
+Persistent=true
+# Keep backup service active for up to 1 hour
+AccuracySec=1h
+
+[Install]
+WantedBy=timers.target
+

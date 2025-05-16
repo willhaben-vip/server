@@ -1,0 +1,343 @@
+      <div class="alert-row">
+        <span class="alert-label">Started:</span>
+        <span class="alert-value">{{ .StartsAt | since }}</span>
+      </div>
+      {{ if .Annotations.description }}
+      <div class="alert-row">
+        <span class="alert-label">Description:</span>
+        <span class="alert-value">{{ .Annotations.description | html }}</span>
+      </div>
+      {{ end }}
+      <div class="alert-row">
+        <span class="alert-label">Labels:</span>
+        <table>
+          <tr>
+            <th>Label</th>
+            <th>Value</th>
+          </tr>
+          {{ range .Labels.SortedPairs }}
+          <tr>
+            <td>{{ .Name | html }}</td>
+            <td>{{ .Value | html }}</td>
+          </tr>
+          {{ end }}
+        </table>
+      </div>
+      {{ if gt (len .Annotations) 0 }}
+      <div class="alert-row">
+        <span class="alert-label">Annotations:</span>
+        <table>
+          <tr>
+            <th>Annotation</th>
+            <th>Value</th>
+          </tr>
+          {{ range .Annotations.SortedPairs }}
+          <tr>
+            <td>{{ .Name | html }}</td>
+            <td>{{ .Value | html }}</td>
+          </tr>
+          {{ end }}
+        </table>
+      </div>
+      {{ end }}
+      {{ if .GeneratorURL }}
+      <div class="alert-row">
+        <span class="alert-label">Source:</span>
+        <span class="alert-value"><a href="{{ .GeneratorURL }}">{{ .GeneratorURL | html }}</a></span>
+      </div>
+      {{ end }}
+    </div>
+    {{ end }}
+    {{ end }}
+
+    {{ if gt (len .Alerts.Resolved) 0 }}
+    <h2>🟢 Resolved Alerts ({{ .Alerts.Resolved | len }})</h2>
+    {{ range .Alerts.Resolved }}
+    <div class="alert-item {{ if .Labels.severity }}severity-{{ .Labels.severity | html }}{{ end }}">
+      <h3>{{ index .Annotations "summary" | html }}</h3>
+      <div class="alert-row">
+        <span class="alert-label">Started:</span>
+        <span class="alert-value">{{ .StartsAt | since }}</span>
+      </div>
+      <div class="alert-row">
+        <span class="alert-label">Resolved:</span>
+        <span class="alert-value">{{ .EndsAt | since }}</span>
+      </div>
+      {{ if .Annotations.description }}
+      <div class="alert-row">
+        <span class="alert-label">Description:</span>
+        <span class="alert-value">{{ .Annotations.description | html }}</span>
+      </div>
+      {{ end }}
+      <div class="alert-row">
+        <span class="alert-label">Labels:</span>
+        <table>
+          <tr>
+            <th>Label</th>
+            <th>Value</th>
+          </tr>
+          {{ range .Labels.SortedPairs }}
+          <tr>
+            <td>{{ .Name | html }}</td>
+            <td>{{ .Value | html }}</td>
+          </tr>
+          {{ end }}
+        </table>
+      </div>
+      {{ if gt (len .Annotations) 0 }}
+      <div class="alert-row">
+        <span class="alert-label">Annotations:</span>
+        <table>
+          <tr>
+            <th>Annotation</th>
+            <th>Value</th>
+          </tr>
+          {{ range .Annotations.SortedPairs }}
+          <tr>
+            <td>{{ .Name | html }}</td>
+            <td>{{ .Value | html }}</td>
+          </tr>
+          {{ end }}
+        </table>
+      </div>
+      {{ end }}
+      {{ if .GeneratorURL }}
+      <div class="alert-row">
+        <span class="alert-label">Source:</span>
+        <span class="alert-value"><a href="{{ .GeneratorURL }}">{{ .GeneratorURL | html }}</a></span>
+      </div>
+      {{ end }}
+    </div>
+    {{ end }}
+    {{ end }}
+
+    <div class="footer">
+      <p>This is an automated alert from Alert Manager. Do not reply to this email.</p>
+      <p>Sent at: {{ now | safeHTML }}</p>
+    </div>
+  </div>
+</body>
+</html>
+{{ end }}
+
+{{ define "email.subject" }}
+[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .GroupLabels.SortedPairs.Values | join " " }} {{ if gt (len .CommonLabels) (len .GroupLabels) }}({{ with .CommonLabels.Remove .GroupLabels.Names }}{{ .Values | join " " }}{{ end }}){{ end }}
+{{ end }}
+
+{{ define "email.html" }}
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>{{ template "email.subject" . }}</title>
+    <style type="text/css">
+        body {
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            color: #333333;
+            line-height: 1.42857143;
+            font-size: 14px;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #ffffff;
+            border: 1px solid #e3e3e3;
+            border-radius: 4px;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+        }
+        .header {
+            padding: 10px 15px;
+            margin-bottom: 20px;
+            border-radius: 3px;
+            color: #ffffff;
+        }
+        .header-resolved {
+            background-color: #5cb85c;
+        }
+        .header-firing {
+            background-color: #d9534f;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 24px;
+            font-weight: 500;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+        th, td {
+            padding: 8px;
+            text-align: left;
+            border-bottom: 1px solid #dddddd;
+        }
+        th {
+            background-color: #f9f9f9;
+            font-weight: bold;
+        }
+        .severity-critical {
+            color: #cc0000;
+            font-weight: bold;
+        }
+        .severity-warning {
+            color: #ff9900;
+            font-weight: bold;
+        }
+        .severity-info {
+            color: #5bc0de;
+        }
+        .links {
+            margin-top: 20px;
+            border-top: 1px solid #eeeeee;
+            padding-top: 15px;
+        }
+        .links a {
+            margin-right: 15px;
+            color: #337ab7;
+            text-decoration: none;
+        }
+        .links a:hover {
+            text-decoration: underline;
+        }
+        .alert-item {
+            border: 1px solid #dddddd;
+            border-radius: 3px;
+            margin-bottom: 15px;
+            padding: 15px;
+        }
+        .alert-item h3 {
+            margin-top: 0;
+            border-bottom: 1px solid #eeeeee;
+            padding-bottom: 10px;
+        }
+        .annotation-item {
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header header-{{ .Status }}">
+            <h1>{{ .Status | toUpper }}: {{ .Alerts | len }} alert{{ if gt (len .Alerts) 1 }}s{{ end }}</h1>
+        </div>
+
+        <div class="summary">
+            <h2>Summary</h2>
+            <p>{{ if gt (len .GroupLabels) 0 }}
+                Grouped by: {{ range .GroupLabels.SortedPairs }}{{ .Name }}={{ .Value }} {{ end }}
+                {{ end }}
+                {{ if gt (len .CommonLabels) 0 }}
+                Common labels: {{ range .CommonLabels.SortedPairs }}{{ .Name }}={{ .Value }} {{ end }}
+                {{ end }}
+            </p>
+        </div>
+
+        <div class="alerts">
+            <h2>Alerts</h2>
+            {{ range .Alerts }}
+            <div class="alert-item">
+                <h3 class="severity-{{ .Labels.severity | toLower }}">{{ .Labels.alertname }}</h3>
+                <table>
+                    <tr>
+                        <th>Status</th>
+                        <td>{{ .Status }}</td>
+                    </tr>
+                    <tr>
+                        <th>Started</th>
+                        <td>{{ .StartsAt.Format "2006-01-02 15:04:05 MST" }}</td>
+                    </tr>
+                    {{ if .EndsAt.After .StartsAt }}
+                    <tr>
+                        <th>Ended</th>
+                        <td>{{ .EndsAt.Format "2006-01-02 15:04:05 MST" }}</td>
+                    </tr>
+                    {{ end }}
+                    {{ if .GeneratorURL }}
+                    <tr>
+                        <th>Source</th>
+                        <td><a href="{{ .GeneratorURL }}">Prometheus Alert</a></td>
+                    </tr>
+                    {{ end }}
+                    <tr>
+                        <th>Severity</th>
+                        <td class="severity-{{ .Labels.severity | toLower }}">{{ .Labels.severity | toUpper }}</td>
+                    </tr>
+                </table>
+
+                <h4>Labels</h4>
+                <table>
+                    {{ range .Labels.SortedPairs }}
+                    <tr>
+                        <th>{{ .Name }}</th>
+                        <td>{{ .Value }}</td>
+                    </tr>
+                    {{ end }}
+                </table>
+
+                {{ if gt (len .Annotations) 0 }}
+                <h4>Annotations</h4>
+                <div class="annotations">
+                    {{ range .Annotations.SortedPairs }}
+                    <div class="annotation-item">
+                        <strong>{{ .Name }}:</strong> {{ .Value }}
+                    </div>
+                    {{ end }}
+                </div>
+                {{ end }}
+
+                <div class="links">
+                    {{ if .Annotations.dashboard }}
+                    <a href="{{ .Annotations.dashboard }}">Dashboard</a>
+                    {{ end }}
+                    {{ if .Annotations.runbook }}
+                    <a href="{{ .Annotations.runbook }}">Runbook</a>
+                    {{ end }}
+                    {{ if .Annotations.kibana }}
+                    <a href="{{ .Annotations.kibana }}">Logs</a>
+                    {{ end }}
+                </div>
+            </div>
+            {{ end }}
+        </div>
+    </div>
+</body>
+</html>
+{{ end }}
+
+{{ define "email.text" }}
+{{ if eq .Status "firing" }}🔥 FIRING{{ else }}✅ RESOLVED{{ end }}: {{ .Alerts | len }} alert{{ if gt (len .Alerts) 1 }}s{{ end }}
+{{ if gt (len .GroupLabels) 0 }}
+Grouped by: {{ range .GroupLabels.SortedPairs }}{{ .Name }}={{ .Value }} {{ end }}
+{{ end }}
+{{ if gt (len .CommonLabels) 0 }}
+Common labels: {{ range .CommonLabels.SortedPairs }}{{ .Name }}={{ .Value }} {{ end }}
+{{ end }}
+
+Alerts:
+{{ range .Alerts }}
+Status: {{ .Status }}
+Alert: {{ .Labels.alertname }}
+Severity: {{ .Labels.severity | toUpper }}
+Started: {{ .StartsAt.Format "2006-01-02 15:04:05 MST" }}
+{{ if .EndsAt.After .StartsAt }}Ended: {{ .EndsAt.Format "2006-01-02 15:04:05 MST" }}{{ end }}
+
+Labels:
+{{ range .Labels.SortedPairs }}{{ .Name }}={{ .Value }}
+{{ end }}
+{{ if gt (len .Annotations) 0 }}
+Annotations:
+{{ range .Annotations.SortedPairs }}{{ .Name }}={{ .Value }}
+{{ end }}{{ end }}
+{{ if .GeneratorURL }}Source: {{ .GeneratorURL }}{{ end }}
+{{ if .Annotations.dashboard }}Dashboard: {{ .Annotations.dashboard }}{{ end }}
+{{ if .Annotations.runbook }}Runbook: {{ .Annotations.runbook }}{{ end }}
+{{ if .Annotations.kibana }}Logs: {{ .Annotations.kibana }}{{ end }}
+
+{{ end }}
+{{ end }}
+

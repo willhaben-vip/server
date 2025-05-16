@@ -1,0 +1,45 @@
+[Unit]
+Description=Verify Backup Integrity and Security
+Documentation=https://prometheus.io/docs/
+# Run after encryption has completed
+After=backup-encryption.service
+Wants=backup-encryption.service
+
+[Service]
+Type=oneshot
+User=prometheus
+Group=prometheus
+# Verification script runs integrity and security checks
+ExecStart=/opt/scripts/monitoring/replication-verify.sh
+# Reasonable timeout for verification operations
+TimeoutStartSec=2h
+SuccessExitStatus=0
+StandardOutput=journal
+StandardError=journal
+
+# Environment variables
+Environment="BACKUP_DIR=/var/backups"
+Environment="VERIFICATION_LEVEL=full" # Options: basic, standard, full
+Environment="CHECKSUM_FILE=/var/backups/checksums.json"
+
+# On verification failure, send critical notifications
+ExecStopPost=/bin/sh -c '[ $EXIT_STATUS != 0 ] && /usr/bin/systemd-cat -t backup-verify -p emerg echo "CRITICAL: Backup verification failed with status $EXIT_STATUS" && /usr/bin/wall "CRITICAL: Backup verification failed, data integrity may be compromised"'
+
+# Success notification for logging
+ExecStopPost=/bin/sh -c '[ $EXIT_STATUS = 0 ] && /usr/bin/systemd-cat -t backup-verify -p info echo "Backup verification completed successfully"'
+
+# Security hardening
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectHome=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+RestrictRealtime=true
+ReadWritePaths=/var/backups /var/log/monitoring
+
+[Install]
+WantedBy=multi-user.target
+

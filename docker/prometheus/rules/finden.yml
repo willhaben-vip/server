@@ -1,0 +1,146 @@
+groups:
+  - name: finden-recording-rules
+    rules:
+      - record: job:finden_error_rate:5m
+        expr: rate(finden_error_total[5m])
+      
+      - record: job:finden_processing_duration:95p
+        expr: histogram_quantile(0.95, sum(rate(image_processing_duration_seconds_bucket[5m])) by (le))
+      
+      - record: job:finden_cache_hit_ratio:5m
+        expr: rate(cache_hit_total[5m]) / (rate(cache_hit_total[5m]) + rate(cache_miss_total[5m]))
+
+  - name: finden-error-alerts
+    rules:
+      - alert: HighErrorRate
+        expr: job:finden_error_rate:5m > 0.05
+        for: 2m
+        labels:
+          severity: critical
+          category: reliability
+        annotations:
+          summary: "High error rate in Finden service"
+          description: "Finden service has a high error rate: {{ $value | humanizePercentage }} errors for the last 5 minutes"
+          dashboard_url: "https://grafana:3000/d/finden-metrics"
+          runbook_url: "https://wiki.example.com/runbooks/high-error-rate"
+          
+      - alert: HighImageProcessingErrorRate
+        expr: rate(image_processing_error_total[5m]) > 0.02
+        for: 2m
+        labels:
+          severity: warning
+          category: processing
+        annotations:
+          summary: "High image processing error rate"
+          description: "Image processing errors are above threshold: {{ $value | humanizePercentage }} for the last 5 minutes"
+          dashboard_url: "https://grafana:3000/d/finden-metrics/image-processing"
+          
+      - alert: APIIntegrationErrors
+        expr: rate(willhaben_api_error_total[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          category: integration
+        annotations:
+          summary: "Willhaben API integration errors"
+          description: "Willhaben API is experiencing errors: {{ $value | humanizePercentage }} for the last 5 minutes"
+          dashboard_url: "https://grafana:3000/d/finden-metrics/api-integration"
+
+  - name: finden-performance-alerts
+    rules:
+      - alert: SlowImageProcessing
+        expr: job:finden_processing_duration:95p > 5
+        for: 5m
+        labels:
+          severity: warning
+          category: performance
+        annotations:
+          summary: "Slow image processing detected"
+          description: "95th percentile of image processing time is above 5 seconds: {{ $value }}s"
+          dashboard_url: "https://grafana:3000/d/finden-metrics/image-processing"
+          
+      - alert: SlowAPIResponse
+        expr: histogram_quantile(0.95, rate(willhaben_api_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+          category: performance
+        annotations:
+          summary: "Slow Willhaben API response"
+          description: "95th percentile of Willhaben API response time is above 2 seconds: {{ $value }}s"
+          dashboard_url: "https://grafana:3000/d/finden-metrics/api-integration"
+          
+      - alert: HighRequestLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{handler=~".*finden.*"}[5m])) > 3
+        for: 5m
+        labels:
+          severity: warning
+          category: performance
+        annotations:
+          summary: "High request latency for Finden service"
+          description: "95th percentile of HTTP request duration for Finden service is above 3 seconds: {{ $value }}s"
+          dashboard_url: "https://grafana:3000/d/finden-metrics/service-performance"
+
+  - name: finden-resource-alerts
+    rules:
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes{job="roadrunner"} > 1.5 * 1024 * 1024 * 1024
+        for: 5m
+        labels:
+          severity: warning
+          category: resources
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is above 1.5GB: {{ $value | humanizeBytes }}"
+          dashboard_url: "https://grafana:3000/d/finden-metrics/resource-usage"
+          
+      - alert: HighCPUUsage
+        expr: rate(process_cpu_seconds_total{job="roadrunner"}[5m]) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          category: resources
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is above 80%: {{ $value | humanizePercentage }}"
+          dashboard_url: "https://grafana:3000/d/finden-metrics/resource-usage"
+
+  - name: finden-cache-alerts
+    rules:
+      - alert: LowCacheHitRate
+        expr: job:finden_cache_hit_ratio:5m < 0.7
+        for: 10m
+        labels:
+          severity: warning
+          category: cache
+        annotations:
+          summary: "Low cache hit rate"
+          description: "Cache hit rate is below 70%: {{ $value | humanizePercentage }}"
+          dashboard_url: "https://grafana:3000/d/finden-metrics/cache-performance"
+          
+      - alert: HighCacheMissRate
+        expr: (1 - job:finden_cache_hit_ratio:5m) > 0.3
+        for: 10m
+        labels:
+          severity: info
+          category: cache
+        annotations:
+          summary: "High cache miss rate"
+          description: "Cache miss rate is above 30%: {{ $value | humanizePercentage }}"
+          dashboard_url: "https://grafana:3000/d/finden-metrics/cache-performance"
+
+  - name: finden-slas
+    rules:
+      - record: job:finden_slo_error_budget:1h
+        expr: 1 - (sum(rate(finden_error_total[1h])) / sum(rate(finden_request_total[1h])))
+      
+      - alert: ErrorBudgetBurn
+        expr: job:finden_slo_error_budget:1h < 0.999
+        for: 1h
+        labels:
+          severity: critical
+          category: sla
+        annotations:
+          summary: "Error budget exceeded"
+          description: "Service is not meeting SLA requirements. Current error budget: {{ $value | humanizePercentage }}"
+          dashboard_url: "https://grafana:3000/d/finden-metrics/slas"

@@ -1,0 +1,302 @@
+{{ /* 
+  AlertManager Slack notification template
+  Uses Block Kit format for rich notifications
+  Includes legacy fallback format for backward compatibility
+  
+  Organized into sections:
+  1. Helper templates (coloring, icons, status formatting)
+  2. Common data extraction templates
+  3. Block Kit formatted templates (primary format)
+  4. Legacy attachment formatted templates (fallback format)
+*/ }}
+
+{{/* ===== Helper Templates ===== */}}
+
+{{/* Format alert status with appropriate emoji */}}
+{{ define "__alert_severity_prefix" -}}
+    {{- if eq .Status "firing" -}}
+        {{- if eq .Labels.severity "critical" -}}:red_circle: *CRITICAL*
+        {{- else if eq .Labels.severity "warning" -}}:warning: *WARNING*
+        {{- else if eq .Labels.severity "info" -}}:information_source: *INFO*
+        {{- else -}}:bell: *ALERT*
+        {{- end -}}
+    {{- else -}}:white_check_mark: *RESOLVED*
+    {{- end }}
+{{- end }}
+
+{{/* Format alert status for coloring */}}
+{{ define "__alert_severity_color" -}}
+    {{- if eq .Status "firing" -}}
+        {{- if eq .Labels.severity "critical" -}}danger
+        {{- else if eq .Labels.severity "warning" -}}warning
+        {{- else if eq .Labels.severity "info" -}}good
+        {{- else -}}#439FE0
+        {{- end -}}
+    {{- else -}}good
+    {{- end }}
+{{- end }}
+
+{{/* Format alert status with icon URL if provided */}}
+{{ define "__alert_status_icon" -}}
+    {{- if eq .Status "firing" -}}
+        {{- if eq .Labels.severity "critical" -}}:fire:
+        {{- else if eq .Labels.severity "warning" -}}:warning:
+        {{- else if eq .Labels.severity "info" -}}:information_source:
+        {{- else -}}:bell:
+        {{- end -}}
+    {{- else -}}:white_check_mark:
+    {{- end }}
+{{- end }}
+
+{{/* Format timestamp */}}
+{{ define "__format_timestamp" -}}
+    {{ .Timestamp.Format "2006-01-02 15:04:05 MST" }}
+{{- end }}
+
+{{/* Format labels as a list */}}
+{{ define "__format_labels" -}}
+{{- range .Labels.SortedPairs }}
+• *{{ .Name }}:* {{ .Value }}
+{{- end }}
+{{- end }}
+
+{{/* Format annotations as a list */}}
+{{ define "__format_annotations" -}}
+{{- range .Annotations.SortedPairs }}
+• *{{ .Name }}:* {{ .Value }}
+{{- end }}
+{{- end }}
+
+{{/* Format alert duration */}}
+{{ define "__format_duration" -}}
+    {{- if gt .ActiveDuration 0 -}}
+        Active for {{ .ActiveDuration.String }}
+    {{- end -}}
+{{- end }}
+
+{{/* ===== Data Extraction Templates ===== */}}
+
+{{/* Get alert summary */}}
+{{ define "__alert_summary" -}}
+    {{- if .Annotations.summary -}}
+        {{ .Annotations.summary }}
+    {{- else if .Annotations.message -}}
+        {{ .Annotations.message }}
+    {{- else if .Annotations.description -}}
+        {{ .Annotations.description }}
+    {{- else -}}
+        {{ .Labels.alertname }}
+    {{- end -}}
+{{- end }}
+
+{{/* Get alert description */}}
+{{ define "__alert_description" -}}
+    {{- if .Annotations.description -}}
+        {{ .Annotations.description }}
+    {{- else if .Annotations.message -}}
+        {{ .Annotations.message }}
+    {{- else if .Annotations.summary -}}
+        {{ .Annotations.summary }}
+    {{- else -}}
+        {{ .Labels.alertname }}
+    {{- end -}}
+{{- end }}
+
+{{/* Get dashboard URL if available */}}
+{{ define "__dashboard_url" -}}
+    {{- if .Annotations.dashboard -}}
+        {{- .Annotations.dashboard -}}
+    {{- else if .Annotations.dashboardURL -}}
+        {{- .Annotations.dashboardURL -}}
+    {{- else if .Annotations.runbook_url -}}
+        {{- .Annotations.runbook_url -}}
+    {{- end -}}
+{{- end }}
+
+{{/* Get runbook URL if available */}}
+{{ define "__runbook_url" -}}
+    {{- if .Annotations.runbook -}}
+        {{- .Annotations.runbook -}}
+    {{- else if .Annotations.runbook_url -}}
+        {{- .Annotations.runbook_url -}}
+    {{- end -}}
+{{- end }}
+
+{{/* ===== Block Kit Format Templates ===== */}}
+
+{{/* Main Slack Block Kit template */}}
+{{ define "slack.blocks" }}
+{
+  "blocks": [
+    {
+      "type": "header",
+      "text": {
+        "type": "plain_text",
+        "text": "{{ if eq .Status "firing" }}{{ .Alerts.Firing | len }} Alert{{ if gt (.Alerts.Firing | len) 1 }}s{{ end }} Firing{{ else }}{{ .Alerts.Resolved | len }} Alert{{ if gt (.Alerts.Resolved | len) 1 }}s{{ end }} Resolved{{ end }}",
+        "emoji": true
+      }
+    },
+    {
+      "type": "divider"
+    },
+    {{ range .Alerts -}}
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "{{ template "__alert_severity_prefix" . }} *{{ .Labels.alertname }}*\n{{ template "__alert_summary" . }}"
+      },
+      "accessory": {
+        "type": "button",
+        "text": {
+          "type": "plain_text",
+          "text": "{{ template "__alert_status_icon" . }} {{ .Status | title }}",
+          "emoji": true
+        },
+        "style": "{{ if eq .Status "firing" }}{{ if eq .Labels.severity "critical" }}danger{{ else if eq .Labels.severity "warning" }}primary{{ else }}primary{{ end }}{{ else }}primary{{ end }}",
+        "url": "{{ template "__alert_manager_url" . }}"
+      }
+    },
+    {
+      "type": "section",
+      "fields": [
+        {
+          "type": "mrkdwn",
+          "text": "*Started:*\n{{ template "__format_timestamp" . }}"
+        },
+        {
+          "type": "mrkdwn",
+          "text": "*Duration:*\n{{ template "__format_duration" . }}"
+        }
+      ]
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Description:*\n{{ template "__alert_description" . }}"
+      }
+    },
+    {{ if .Labels.SortedPairs -}}
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Labels:*\n{{ template "__format_labels" . }}"
+      }
+    },
+    {{ end -}}
+    {{ $dashboard_url := template "__dashboard_url" . -}}
+    {{ $runbook_url := template "__runbook_url" . -}}
+    {{ if or $dashboard_url $runbook_url -}}
+    {
+      "type": "actions",
+      "elements": [
+        {{ if $dashboard_url -}}
+        {
+          "type": "button",
+          "text": {
+            "type": "plain_text",
+            "text": ":chart_with_upwards_trend: Dashboard",
+            "emoji": true
+          },
+          "url": "{{ $dashboard_url }}"
+        }{{ if $runbook_url }},{{ end }}
+        {{- end }}
+        {{ if $runbook_url -}}
+        {
+          "type": "button",
+          "text": {
+            "type": "plain_text",
+            "text": ":notebook: Runbook",
+            "emoji": true
+          },
+          "url": "{{ $runbook_url }}"
+        }
+        {{- end }}
+      ]
+    },
+    {{- end }}
+    {
+      "type": "divider"
+    },
+    {{- end }}
+    {
+      "type": "context",
+      "elements": [
+        {
+          "type": "mrkdwn",
+          "text": "Sent from *AlertManager* | {{ .ExternalURL }}"
+        }
+      ]
+    }
+  ],
+  "text": "{{ if eq .Status "firing" }}{{ .Alerts.Firing | len }} Alert{{ if gt (.Alerts.Firing | len) 1 }}s{{ end }} Firing{{ else }}{{ .Alerts.Resolved | len }} Alert{{ if gt (.Alerts.Resolved | len) 1 }}s{{ end }} Resolved{{ end }}"
+}
+{{ end }}
+
+{{/* AlertManager URL template */}}
+{{ define "__alert_manager_url" -}}
+    {{ .GeneratorURL }}
+{{- end }}
+
+{{/* ===== Legacy Format Templates ===== */}}
+
+{{/* Legacy Slack attachment template for backward compatibility */}}
+{{ define "slack.legacy" }}
+{
+  "attachments": [
+    {
+      "fallback": "{{ if eq .Status "firing" }}{{ .Alerts.Firing | len }} Alert{{ if gt (.Alerts.Firing | len) 1 }}s{{ end }} Firing{{ else }}{{ .Alerts.Resolved | len }} Alert{{ if gt (.Alerts.Resolved | len) 1 }}s{{ end }} Resolved{{ end }}",
+      "title": "{{ if eq .Status "firing" }}{{ .Alerts.Firing | len }} Alert{{ if gt (.Alerts.Firing | len) 1 }}s{{ end }} Firing{{ else }}{{ .Alerts.Resolved | len }} Alert{{ if gt (.Alerts.Resolved | len) 1 }}s{{ end }} Resolved{{ end }}",
+      "title_link": "{{ .ExternalURL }}",
+      "color": "{{ if eq .Status "firing" }}danger{{ else }}good{{ end }}",
+      "pretext": "Alert Manager",
+      "fields": [
+        {{ range .Alerts -}}
+        {
+          "title": "{{ template "__alert_severity_prefix" . }} {{ .Labels.alertname }}",
+          "value": "{{ template "__alert_summary" . }}\n{{ template "__alert_description" . }}",
+          "short": false
+        },
+        {
+          "title": "Labels",
+          "value": "{{ range .Labels.SortedPairs }}• {{ .Name }}: {{ .Value }}\n{{ end }}",
+          "short": false
+        },
+        {{ $dashboard_url := template "__dashboard_url" . -}}
+        {{ if $dashboard_url -}}
+        {
+          "title": "Dashboard",
+          "value": "<{{ $dashboard_url }}|View Dashboard>",
+          "short": true
+        },
+        {{- end }}
+        {{ $runbook_url := template "__runbook_url" . -}}
+        {{ if $runbook_url -}}
+        {
+          "title": "Runbook",
+          "value": "<{{ $runbook_url }}|View Runbook>",
+          "short": true
+        },
+        {{- end }}
+        {
+          "title": "Status",
+          "value": "{{ .Status | title }} - {{ template "__format_timestamp" . }}{{ if gt .ActiveDuration 0.0 }} ({{ template "__format_duration" . }}){{ end }}",
+          "short": false
+        }
+        {{- if ne $index $lastIndex }},{{ end }}
+        {{- end }}
+      ],
+      "footer": "Sent from AlertManager",
+      "footer_icon": "https://prometheus.io/assets/favicons/android-chrome-192x192.png",
+      "ts": {{ .CommonTimestamp.Unix }}
+    }
+  ],
+  "text": ""
+}
+{{ end }}
+
+{{/* Default Slack notification template */}}
+{{ define "slack.default" }}{{ template "slack.blocks" . }}{{ end }}
+
